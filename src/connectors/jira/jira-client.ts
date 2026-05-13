@@ -1,22 +1,45 @@
 // ══════════════════════════════════════════════════════════════
 // Jira Client — REST API v3 for Atlassian Cloud
 // ══════════════════════════════════════════════════════════════
+//
+// Wrapper around Jira Cloud's REST API v3 for issue management.
+// Supports searching (JQL), CRUD operations, comments, transitions,
+// and file attachments. Uses Basic Auth (email + API token).
+//
+// Reference: https://developer.atlassian.com/cloud/jira/platform/rest/v3/
+// ══════════════════════════════════════════════════════════════
 
 import axios, { type AxiosInstance } from "axios";
 
+/**
+ * Connection credentials and project context for Jira Cloud.
+ */
 export interface JiraConfig {
+    /** Jira Cloud base URL (e.g., https://yourdomain.atlassian.net) */
     baseUrl: string;
+    /** Atlassian account email address */
     email: string;
+    /** Atlassian API token (not password) */
     apiToken: string;
+    /** Project key where issues will be created */
     projectKey: string;
 }
 
+/**
+ * Represents a Jira issue returned by the API.
+ */
 export interface JiraIssue {
+    /** Internal numeric issue ID */
     id: string;
+    /** Human-readable issue key (e.g., "CERT-42") */
     key: string;
+    /** Full field map (varies by expand parameters) */
     fields: Record<string, unknown>;
 }
 
+/**
+ * Paginated search result from a JQL query.
+ */
 export interface JiraSearchResult {
     issues: JiraIssue[];
     total: number;
@@ -24,6 +47,9 @@ export interface JiraSearchResult {
     startAt: number;
 }
 
+/**
+ * Input shape for creating a new Jira issue.
+ */
 export interface CreateIssueInput {
     summary: string;
     description: string;
@@ -35,16 +61,30 @@ export interface CreateIssueInput {
     customFields?: Record<string, unknown>;
 }
 
+/**
+ * Describes an available workflow transition for an issue.
+ */
 export interface TransitionInfo {
     id: string;
     name: string;
     to: { name: string; id: string };
 }
 
+/**
+ * Client for Jira Cloud REST API v3.
+ *
+ * Authentication: HTTP Basic Auth using email + API token.
+ * Content format: Atlassian Document Format (ADF) for descriptions/comments.
+ */
 export class JiraClient {
     private readonly axios: AxiosInstance;
     private readonly projectKey: string;
 
+    /**
+     * Creates a Jira client configured for a specific project.
+     *
+     * @param config - Jira connection and project settings
+     */
     constructor(config: JiraConfig) {
         this.projectKey = config.projectKey;
         const auth = Buffer.from(`${config.email}:${config.apiToken}`).toString("base64");
@@ -61,6 +101,13 @@ export class JiraClient {
 
     // ── Search ──
 
+    /**
+     * Executes a JQL query and returns matching issues.
+     *
+     * @param jql        - JQL query string
+     * @param fields     - Fields to return (default: common set)
+     * @param maxResults - Page size (default: 50)
+     */
     async search(jql: string, fields = ["summary", "status", "priority", "labels", "assignee", "created", "updated"], maxResults = 50): Promise<JiraSearchResult> {
         const response = await this.axios.post("/search", {
             jql,
@@ -70,6 +117,15 @@ export class JiraClient {
         return response.data;
     }
 
+    /**
+     * Searches for an existing open issue matching a test case ID
+     * and failure category label. Used by the deduplication engine
+     * to avoid creating duplicate bugs.
+     *
+     * @param testcaseId      - Test case identifier (e.g., "TC_001_CS")
+     * @param failureCategory - Label used to categorize the failure type
+     * @returns The most recently created matching issue, or null
+     */
     async findExistingIssue(testcaseId: string, failureCategory: string): Promise<JiraIssue | null> {
         const jql = `project = "${this.projectKey}" AND summary ~ "${testcaseId}" AND labels = "${failureCategory}" AND status != "Done" ORDER BY created DESC`;
         const result = await this.search(jql, undefined, 1);
@@ -78,11 +134,23 @@ export class JiraClient {
 
     // ── CRUD ──
 
+    /**
+     * Retrieves a single issue by key.
+     *
+     * @param issueKey - Issue key (e.g., "CERT-42")
+     */
     async getIssue(issueKey: string): Promise<JiraIssue> {
         const response = await this.axios.get(`/issue/${issueKey}`);
         return response.data;
     }
 
+    /**
+     * Creates a new issue in the configured project.
+     * Description is formatted as Atlassian Document Format (ADF).
+     *
+     * @param input - Issue creation payload
+     * @returns Created issue with assigned key
+     */
     async createIssue(input: CreateIssueInput): Promise<JiraIssue> {
         const fields: Record<string, unknown> = {
             project: { key: this.projectKey },
@@ -110,12 +178,24 @@ export class JiraClient {
         return response.data;
     }
 
+    /**
+     * Updates fields on an existing issue.
+     *
+     * @param issueKey - Issue to update
+     * @param fields   - Partial field map
+     */
     async updateIssue(issueKey: string, fields: Record<string, unknown>): Promise<void> {
         await this.axios.put(`/issue/${issueKey}`, { fields });
     }
 
     // ── Comments ──
 
+    /**
+     * Adds a comment to an issue.
+     *
+     * @param issueKey - Target issue
+     * @param body     - Plain text comment body (converted to ADF)
+     */
     async addComment(issueKey: string, body: string): Promise<void> {
         await this.axios.post(`/issue/${issueKey}/comment`, {
             body: {
@@ -133,11 +213,24 @@ export class JiraClient {
 
     // ── Transitions ──
 
+    /**
+     * Lists available workflow transitions for an issue.
+     *
+     * @param issueKey - Target issue
+     * @returns Array of transition metadata
+     */
     async getTransitions(issueKey: string): Promise<TransitionInfo[]> {
         const response = await this.axios.get(`/issue/${issueKey}/transitions`);
         return response.data.transitions;
     }
 
+    /**
+     * Performs a workflow transition by transition ID.
+     *
+     * @param issueKey     - Target issue
+     * @param transitionId - Transition ID from getTransitions()
+     * @param comment      - Optional comment to add during transition
+     */
     async transitionIssue(issueKey: string, transitionId: string, comment?: string): Promise<void> {
         const body: Record<string, unknown> = {
             transition: { id: transitionId },
@@ -162,6 +255,15 @@ export class JiraClient {
         await this.axios.post(`/issue/${issueKey}/transitions`, body);
     }
 
+    /**
+     * Performs a workflow transition by human-readable name (case-insensitive).
+     * Useful when the transition ID is not known in advance.
+     *
+     * @param issueKey       - Target issue
+     * @param transitionName - Human-readable transition name (e.g., "Reopen")
+     * @param comment        - Optional comment
+     * @returns true if the transition was found and applied
+     */
     async transitionByName(issueKey: string, transitionName: string, comment?: string): Promise<boolean> {
         const transitions = await this.getTransitions(issueKey);
         const target = transitions.find((t) => t.name.toLowerCase() === transitionName.toLowerCase());
@@ -172,6 +274,13 @@ export class JiraClient {
 
     // ── Attachments ──
 
+    /**
+     * Attaches a file to an issue.
+     *
+     * @param issueKey - Target issue
+     * @param filename - Display filename
+     * @param content  - Raw file content as Buffer
+     */
     async addAttachment(issueKey: string, filename: string, content: Buffer): Promise<void> {
         const FormData = (await import("form-data")).default;
         const form = new FormData();

@@ -2,6 +2,21 @@
 // CDS Client — SLEP TCP protocol client
 // Adapted from e2e-automation-controller/src/cds.ts (CdsClientV2)
 // ══════════════════════════════════════════════════════════════
+//
+// Communicates with the Keysight SL1040A CDS (Charging Discovery System)
+// over a raw TCP socket using the SLEP (Smart Charging Language for
+// Electric Power) binary protocol.
+//
+// Protocol frame layout (single PID request):
+//   [0..3]  Magic     : "SLEP" (0x53 0x4c 0x45 0x50)
+//   [4..5]  Length    : total frame length (little-endian uint16)
+//   [6]     Version   : 0x01
+//   [7]     Command   : 0x01 = GET, 0x03 = SET, 0x05 = SET_MULTI
+//   [8..9]  PID       : parameter ID (little-endian uint16)
+//   [10]    Parafault : error code from previous operation
+//   [11]    DataType  : 0x01 = int32, 0x02 = float
+//   [12..15] Value    : 4 bytes (int32 LE or float LE)
+// ══════════════════════════════════════════════════════════════
 
 import { Socket } from "net";
 import { ReplaySubject, BehaviorSubject, Subscription, interval, firstValueFrom } from "rxjs";
@@ -14,12 +29,26 @@ import {
     type CdsConfig, type EvConfig, type EvConfigAc,
 } from "./types.js";
 
+/** Internal shape for a single PID write operation */
 type WritePidEntry = { pid: number; dataType: DataType; value: number };
 
+/**
+ * Client for the Keysight CDS SLEP protocol.
+ *
+ * Responsibilities:
+ *   - TCP connection management
+ *   - Low-level SLEP frame encoding/decoding
+ *   - Status polling and reactive state tracking
+ *   - High-level operations (reset, start, stop, configure)
+ */
 export class CdsClient {
+    /** RxJS subject that emits every raw TCP response buffer */
     public readonly responseData = new ReplaySubject<Buffer>(1);
+    /** Reactive current status value (bitmask) polled from the CDS */
     public readonly statusValue = new BehaviorSubject<number>(0);
+    /** When true, logs every status change to the console */
     public statusLogging = false;
+    /** True while the TCP socket is connected */
     public isConnected = false;
 
     private socket: Socket;
@@ -27,6 +56,10 @@ export class CdsClient {
     private statusSubscription?: Subscription;
     private readonly disconnect$ = new ReplaySubject<void>(1);
 
+    /**
+     * @param ip   - IP address of the CDS hardware
+     * @param port - TCP port (default: 51001)
+     */
     constructor(
         public readonly ip: string,
         public readonly port: number = 51001
@@ -36,6 +69,12 @@ export class CdsClient {
 
     // ── Connection ──
 
+    /**
+     * Opens a TCP connection to the CDS and starts status polling.
+     * If already connected, returns immediately.
+     *
+     * @returns true on successful connection, false on failure
+     */
     async connect(): Promise<boolean> {
         if (this.isConnected) return true;
 
@@ -43,20 +82,20 @@ export class CdsClient {
             this.socket.connect(this.port, this.ip, () => {
                 this.isConnected = true;
 
-                // Poll status every second
+                // Start polling the Status PID every second so statusValue stays current
                 this.statusPollingSubscription?.unsubscribe();
                 this.statusPollingSubscription = interval(1000)
                     .pipe(takeUntil(this.disconnect$))
                     .subscribe(() => this.requestSinglePid(PidList.Status));
 
-                // Parse status updates
+                // Subscribe to raw responses and extract status updates
                 this.statusSubscription?.unsubscribe();
                 this.statusSubscription = this.responseData
                     .pipe(
                         filter((data: Buffer) => data.length <= 16),
                         map((data: Buffer) => this.parseSinglePidResponse(data)),
-                        filter((resp) => resp.pid === PidList.Status && resp.type === "GET_RESPONSE"),
-                        map((resp) => resp.value ?? 0),
+                        filter((response) => response.pid === PidList.Status && response.type === "GET_RESPONSE"),
+                        map((response) => response.value ?? 0),
                         takeUntil(this.disconnect$)
                     )
                     .subscribe((value) => {
@@ -82,6 +121,11 @@ export class CdsClient {
         });
     }
 
+    /**
+     * Closes the TCP connection and tears down subscriptions.
+     *
+     * @returns true when the socket closes
+     */
     async disconnect(): Promise<boolean> {
         return new Promise((resolve) => {
             this.socket.on("close", () => resolve(true));
@@ -94,10 +138,16 @@ export class CdsClient {
 
     // ── Low-level SLEP protocol ──
 
+    /** Sends a raw buffer over the TCP socket. */
     private sendCommand(buffer: Buffer): void {
         this.socket.write(Uint8Array.from(buffer));
     }
 
+    /**
+     * Sends a GET request for a single PID.
+     *
+     * @param pid - Parameter ID to read
+     */
     requestSinglePid(pid: number): void {
         const header = Buffer.from([0x53, 0x4c, 0x45, 0x50, 0x0c, 0x00, 0x01, 0x01]);
         const pidBuffer = Buffer.alloc(2);
@@ -106,6 +156,13 @@ export class CdsClient {
         this.sendCommand(Buffer.concat([header, pidBuffer, reserved]));
     }
 
+    /**
+     * Sends a SET request for a single PID value.
+     *
+     * @param pid      - Parameter ID to write
+     * @param dataType - "int32" or "float"
+     * @param value    - Numeric value to write
+     */
     writeSinglePid(pid: number, dataType: DataType, value: number): void {
         const header = Buffer.from([0x53, 0x4c, 0x45, 0x50, 0x10, 0x00, 0x01, 0x03]);
         const pidBuffer = Buffer.alloc(2);
@@ -117,6 +174,12 @@ export class CdsClient {
         this.sendCommand(Buffer.concat([header, pidBuffer, reservedAndType, valueBuffer]));
     }
 
+    /**
+     * Sends a SET request for multiple PID values in a single frame.
+     * More efficient than calling writeSinglePid repeatedly.
+     *
+     * @param pids - Array of PID entries to write
+     */
     writeMultiplePids(pids: WritePidEntry[]): void {
         const header = Buffer.from([0x53, 0x4c, 0x45, 0x50, 0x00, 0x00, 0x01, 0x05]);
         const reserved = Buffer.alloc(4);
@@ -136,6 +199,14 @@ export class CdsClient {
         this.sendCommand(Buffer.concat([header, reserved, tuples]));
     }
 
+    /**
+     * Parses a single-PID response frame (12 bytes for SET_RESPONSE,
+     * 16 bytes for GET_RESPONSE).
+     *
+     * @param data - Raw response buffer
+     * @returns Structured PID response
+     * @throws if the frame length is unexpected
+     */
     parseSinglePidResponse(data: Buffer): PidResponse {
         const pid = data.readUInt16LE(8);
         const parafault = data.readUInt8(10);
@@ -160,6 +231,12 @@ export class CdsClient {
         throw new Error(`Unknown response format: length=${data.length}`);
     }
 
+    /**
+     * Parses a multi-PID response frame (command 0x05).
+     *
+     * @param data - Raw response buffer
+     * @returns Array of parsed PID responses
+     */
     parseMultiResponse(data: Buffer): MultiPidResponse[] {
         const results: MultiPidResponse[] = [];
         const count = (data.length - 12) / 8;
@@ -190,19 +267,26 @@ export class CdsClient {
 
     // ── High-level operations ──
 
+    /**
+     * Reads a single PID value and waits for the response.
+     *
+     * @param pid       - Parameter ID to read
+     * @param timeoutMs - Maximum wait time in milliseconds
+     * @returns Parsed PID response, or null on timeout
+     */
     async readPid(pid: number, timeoutMs = 2000): Promise<PidResponse | null> {
         return new Promise((resolve) => {
-            let sub: Subscription;
-            const timer = setTimeout(() => { sub?.unsubscribe(); resolve(null); }, timeoutMs);
+            let subscription: Subscription;
+            const timer = setTimeout(() => { subscription?.unsubscribe(); resolve(null); }, timeoutMs);
 
-            sub = this.responseData
+            subscription = this.responseData
                 .pipe(filter((data: Buffer) => data.length === 16))
                 .subscribe((data: Buffer) => {
-                    const resp = this.parseSinglePidResponse(data);
-                    if (resp.pid === pid) {
+                    const response = this.parseSinglePidResponse(data);
+                    if (response.pid === pid) {
                         clearTimeout(timer);
-                        sub.unsubscribe();
-                        resolve(resp);
+                        subscription.unsubscribe();
+                        resolve(response);
                     }
                 });
 
@@ -210,10 +294,17 @@ export class CdsClient {
         });
     }
 
+    /**
+     * Waits until the CDS status equals the target value.
+     *
+     * @param target    - Desired status bitmask value
+     * @param timeoutMs - Maximum wait time
+     * @returns true if target reached, false on timeout
+     */
     async waitForStatus(target: number, timeoutMs = 5000): Promise<boolean> {
         return firstValueFrom(
             this.statusValue.pipe(
-                filter((s) => s === target),
+                filter((status) => status === target),
                 timeout(timeoutMs),
                 map(() => true),
                 catchError(() => of(false))
@@ -221,10 +312,17 @@ export class CdsClient {
         );
     }
 
+    /**
+     * Waits until at least one bit in the given bitmask is set in the status.
+     *
+     * @param bitMask   - Bitmask to test (e.g., CdsStatus.Running)
+     * @param timeoutMs - Maximum wait time
+     * @returns true if any bit matched, false on timeout
+     */
     async waitForStatusBit(bitMask: number, timeoutMs = 5000): Promise<boolean> {
         return firstValueFrom(
             this.statusValue.pipe(
-                filter((s) => (s & bitMask) !== 0),
+                filter((status) => (status & bitMask) !== 0),
                 timeout(timeoutMs),
                 map(() => true),
                 catchError(() => of(false))
@@ -232,20 +330,31 @@ export class CdsClient {
         );
     }
 
-    private calcBattVoltage(max: number, min: number, soc: number): number {
-        let result = Math.round((max - min) * (soc / 100) + min);
-        if (result >= max) result = max - 1;
+    /**
+     * Calculates a plausible battery voltage from SoC and voltage limits.
+     * Used to initialize the EV battery voltage PID before starting.
+     */
+    private calcBattVoltage(maxVoltage: number, minVoltage: number, soc: number): number {
+        let result = Math.round((maxVoltage - minVoltage) * (soc / 100) + minVoltage);
+        if (result >= maxVoltage) result = maxVoltage - 1;
         return result;
     }
 
+    /**
+     * Waits for a multi-PID SET response and verifies all PIDs were
+     * written successfully (parafault === 0 for each).
+     *
+     * @param sendData - The PID entries that were sent
+     * @returns true if all writes succeeded
+     */
     private async checkWriteResponse(sendData: WritePidEntry[]): Promise<boolean> {
         return firstValueFrom(
             this.responseData.pipe(
                 filter((data: Buffer) => data.length === 12 + 8 * sendData.length),
                 map((data: Buffer) => {
-                    const resp = this.parseMultiResponse(data);
-                    const allPresent = sendData.every((sd) => resp.some((r) => r.pid === sd.pid));
-                    return allPresent && resp.every((r) => r.parafault === 0);
+                    const response = this.parseMultiResponse(data);
+                    const allPresent = sendData.every((sent) => response.some((r) => r.pid === sent.pid));
+                    return allPresent && response.every((r) => r.parafault === 0);
                 }),
                 take(1)
             )
@@ -254,18 +363,30 @@ export class CdsClient {
 
     // ── Lifecycle ──
 
+    /**
+     * Performs a full CDS reset cycle:
+     *   1. Stop if running
+     *   2. Send Reset command
+     *   3. Wait for Stopped → Initializing → Stopped
+     *
+     * This returns the CDS to a known idle state.
+     *
+     * @returns true if the reset completed successfully
+     */
     async reset(): Promise<boolean> {
         try {
+            // If not already stopped or in error, send Stop and wait
             if (!(await this.waitForStatus(CdsStatus.Stopped, 2000)) && !(await this.waitForStatus(CdsStatus.ErrorPending, 2000))) {
                 this.writeSinglePid(PidList.Control, "int32", CdsControl.Stop);
                 await this.waitForStatus(CdsStatus.Stopped, 20000);
             }
 
-            const sub = this.responseData.pipe(filter((d: Buffer) => d.length === 12)).subscribe((data) => {
-                const resp = this.parseSinglePidResponse(data);
-                if (resp.pid === PidList.Control) {
+            // Wait for the Control SET_RESPONSE, then send Reset
+            const subscription = this.responseData.pipe(filter((data: Buffer) => data.length === 12)).subscribe((data) => {
+                const response = this.parseSinglePidResponse(data);
+                if (response.pid === PidList.Control) {
                     this.writeSinglePid(PidList.Control, "int32", CdsControl.Reset);
-                    sub.unsubscribe();
+                    subscription.unsubscribe();
                 }
             });
 
@@ -278,22 +399,43 @@ export class CdsClient {
         }
     }
 
+    /**
+     * Starts the EV simulation (transitions CDS from Stopped to Running).
+     *
+     * @returns true if Running status is reached within 5s
+     */
     async start(): Promise<boolean> {
         this.writeSinglePid(PidList.Control, "int32", CdsControl.Start);
         return this.waitForStatus(CdsStatus.Running, 5000);
     }
 
+    /**
+     * Stops the EV simulation (transitions CDS to Stopped).
+     *
+     * @returns true if Stopped status is reached within 20s
+     */
     async stop(): Promise<boolean> {
         this.writeSinglePid(PidList.Control, "int32", CdsControl.Stop);
         return this.waitForStatus(CdsStatus.Stopped, 20000);
     }
 
+    /**
+     * Triggers an emergency off (immediate power disconnect).
+     * This does not wait for status confirmation.
+     */
     async emergencyStop(): Promise<void> {
         this.writeSinglePid(PidList.Control, "int32", CdsControl.EmergencyOff);
     }
 
     // ── Configuration ──
 
+    /**
+     * Configures the CDS hardware: charging specification, DC/AC mode,
+     * sink ID, and test mode.
+     *
+     * @param config - CDS configuration parameters
+     * @returns true if all PID writes were acknowledged without error
+     */
     async configureCds(config: CdsConfig): Promise<boolean> {
         const { specification, chargeMode, sinkId, mode = 2 } = config;
         const sendData: WritePidEntry[] = [
@@ -307,6 +449,14 @@ export class CdsClient {
         return this.checkWriteResponse(sendData);
     }
 
+    /**
+     * Configures EV DC parameters: voltage/current limits, power limit,
+     * battery capacity, and state of charge. Also computes an initial
+     * battery voltage from the SoC.
+     *
+     * @param config - EV electrical parameters
+     * @returns true if all PID writes were acknowledged without error
+     */
     async configureEv(config: EvConfig): Promise<boolean> {
         const {
             SwitchOffLimitVoltage = 1000, SwitchOffLimitCurrent = 600,
@@ -333,6 +483,12 @@ export class CdsClient {
         return this.checkWriteResponse(sendData);
     }
 
+    /**
+     * Configures minimal EV AC parameters (SoC and battery capacity).
+     *
+     * @param config - EV AC parameters
+     * @returns true if all PID writes were acknowledged without error
+     */
     async configureEvAc(config: EvConfigAc): Promise<boolean> {
         const { EVstateOfCharge = 20, BatteryCapacity = 10000 } = config;
         const sendData: WritePidEntry[] = [
@@ -345,20 +501,32 @@ export class CdsClient {
 
     // ── Measurements ──
 
+    /**
+     * Reads the current DC measurements from the CDS:
+     * voltage, current, state of charge, and CP state.
+     *
+     * @returns Object with nullable measurement values
+     */
     async readMeasurements(): Promise<{ voltage: number | null; current: number | null; soc: number | null; cpStateRaw: number | null }> {
-        const vResp = await this.readPid(PidList.u_dc_act);
-        const iResp = await this.readPid(PidList.i_dc_act);
-        const socResp = await this.readPid(PidList.EVRESSSoC);
-        const cpResp = await this.readPid(PidList.CpStateEvse);
-        
+        const voltageResponse = await this.readPid(PidList.u_dc_act);
+        const currentResponse = await this.readPid(PidList.i_dc_act);
+        const socResponse = await this.readPid(PidList.EVRESSSoC);
+        const cpResponse = await this.readPid(PidList.CpStateEvse);
+
         return {
-            voltage: vResp?.value ?? null,
-            current: iResp?.value ?? null,
-            soc: socResp?.value ?? null,
-            cpStateRaw: cpResp?.value ?? null,
+            voltage: voltageResponse?.value ?? null,
+            current: currentResponse?.value ?? null,
+            soc: socResponse?.value ?? null,
+            cpStateRaw: cpResponse?.value ?? null,
         };
     }
 
+    /**
+     * Translates a status bitmask into an array of human-readable flag names.
+     *
+     * @param value - Raw status value from the CDS
+     * @returns Array of active status descriptions
+     */
     getStatusDescription(value: number): string[] {
         const flags: string[] = [];
         if (value === 0) return ["stopped"];

@@ -8,6 +8,16 @@ import { classifySeverity } from "./severity-classifier.js";
 
 /**
  * Maps an OCTT test failure report to a Jira issue creation payload.
+ *
+ * The generated issue includes:
+ *   - Summary with verdict and test case ID
+ *   - Markdown description with test metadata and severity analysis
+ *   - Labels for filtering (ocpp version, profile, verdict, SUT)
+ *   - Priority derived from severity classification
+ *
+ * @param report         - OCTT report entry for the failed test
+ * @param verdictHistory - Optional historical verdicts for repeatability scoring
+ * @returns Jira issue creation payload
  */
 export function mapToJiraIssue(
     report: ReportEntry,
@@ -33,7 +43,7 @@ export function mapToJiraIssue(
         `### Severity Analysis`,
         `**Priority:** ${severity.priority} (score: ${severity.score})`,
         `**Factors:**`,
-        ...severity.factors.map((f) => `- ${f}`),
+        ...severity.factors.map((factor) => `- ${factor}`),
     ].join("\n");
 
     const labels = [
@@ -55,6 +65,9 @@ export function mapToJiraIssue(
 
 /**
  * Generates a comment body for an existing issue when a test failure recurs.
+ *
+ * @param report - OCTT report entry for the recurring failure
+ * @returns Markdown-formatted comment string
  */
 export function mapToJiraComment(report: ReportEntry): string {
     return [

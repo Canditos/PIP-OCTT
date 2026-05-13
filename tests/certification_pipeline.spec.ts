@@ -3,17 +3,50 @@ import { test, expect } from '@playwright/test';
 // ══════════════════════════════════════════════════════════════
 // CERTIFICATION PIPELINE — CDS + OCTT (Playwright)
 // ══════════════════════════════════════════════════════════════
+//
+// This test suite automates the full OCPP certification workflow:
+//   1. Lab Setup      → Register and configure the CDS EV simulator
+//   2. OCTT Session   → Start a test session on the OCTT server
+//   3. Test Execution → Run all test cases grouped by functional suite
+//   4. Tear Down      → Print summary, stop session, cleanup CDS
+//
+// The suite runs in serial mode because OCTT only supports one
+// active session and the CDS state must be managed sequentially.
+// ══════════════════════════════════════════════════════════════
 
+/**
+ * Central configuration object populated from environment variables.
+ * These values are injected by the dashboard server when spawning
+ * Playwright, or can be set manually in a .env file.
+ */
 const CONFIG = {
+    /** Base URL of the certification dashboard server */
     dashboardUrl: 'http://127.0.0.1:3101/api',
+    /** OCTT API base URL (constructed from OCTT_BASE_URL env var) */
     octtBaseUrl: process.env.OCTT_BASE_URL ? `${process.env.OCTT_BASE_URL}/api/v1` : '',
+    /** Bearer token for OCTT API authentication */
     octtToken: process.env.OCTT_TOKEN ?? '',
+    /** IP address of the Keysight CDS hardware */
     cdsIp: process.env.CDS_IP ?? '192.168.100.10',
+    /** TCP port for the CDS SLEP protocol */
     cdsPort: parseInt(process.env.CDS_PORT ?? '51001', 10),
+    /** Sink identifier used by the CDS (typically 12) */
     sinkId: 12,
+    /** OCTT configuration/profile name to use for the session */
     configurationName: process.env.OCTT_CONFIG ?? 'AUT_SID_SAT',
+    /** OCPP version under test (ocpp1.6 or ocpp2.0.1) */
+    ocppVersion: process.env.OCTT_OCPP_VERSION ?? 'ocpp1.6',
+    /** Role under test: CS (Charge Station) or CSMS (Central System) */
+    role: process.env.OCTT_ROLE ?? 'CS',
 } as const;
 
+/**
+ * OCTT API paths are versioned by OCPP version and role.
+ * Example: /ocpp1.6/CS/session/start/AUT_SID_SAT
+ */
+const versionedPath = `/${CONFIG.ocppVersion}/${CONFIG.role}`;
+
+// Log the resolved environment for debugging CI/local runs
 console.log('[PLAYWRIGHT ENV]', {
     OCTT_BASE_URL: process.env.OCTT_BASE_URL ? 'set' : 'missing',
     OCTT_TOKEN: process.env.OCTT_TOKEN ? 'set' : 'missing',
@@ -22,10 +55,22 @@ console.log('[PLAYWRIGHT ENV]', {
     configurationName: CONFIG.configurationName,
 });
 
+/** Unique identifier for this CDS instance in the dashboard */
 const cdsId = `cds-${CONFIG.cdsIp.replace(/\./g, '-')}-${CONFIG.cdsPort}`;
 
+/** Authorization header sent with every OCTT request */
 const authHeader = { Authorization: `Bearer ${CONFIG.octtToken}` };
 
+// ══════════════════════════════════════════════════════════════
+// SECTION: Test Catalog
+// Mirrors the catalog defined in the dashboard server so that
+// both sides agree on suite names and test membership.
+// ══════════════════════════════════════════════════════════════
+
+/**
+ * Test suites grouped by functional area. Each suite contains
+ * the test case IDs that belong to that OCPP functional block.
+ */
 const testSuites: Record<string, string[]> = {
     'MAINTENANCE': [
         'tc_bi_restore_configuration', 'tc_bi_stop_transactions', 'tc_bi_clear_cache',
@@ -45,8 +90,18 @@ const testSuites: Record<string, string[]> = {
     'Transactions': ['TC_003_CS', 'TC_004_1_CS', 'TC_004_2_CS', 'TC_005_1_CS', 'TC_005_2_CS', 'TC_005_3_CS', 'TC_007_1_CS', 'TC_007_2_CS', 'TC_036_CS', 'TC_037_1_CS', 'TC_037_2_CS', 'TC_037_3_CS', 'TC_038_CS', 'TC_039_CS', 'TC_068_CS', 'TC_069_CS'],
 };
 
+/** Suites that involve physical charging state and need CDS reset between tests */
 const chargingSuites = ['Transactions', 'RemoteControl', 'SmartCharging', 'Reservation'];
 
+/**
+ * Determines whether a CDS reset is required before/after a given test.
+ * Charging-related suites and connector-lock tests leave the CDS in
+ * a non-idle state, so resetting prevents state leakage between tests.
+ *
+ * @param suite  - Functional suite name
+ * @param testId - Test case identifier
+ * @returns true if the CDS should be reset for this test
+ */
 function needsCdsReset(suite: string, testId: string): boolean {
     if (chargingSuites.includes(suite)) return true;
     if (testId.startsWith('TC_017') || testId.startsWith('TC_018')) return true;
@@ -54,36 +109,53 @@ function needsCdsReset(suite: string, testId: string): boolean {
     return false;
 }
 
+/**
+ * Performs a full CDS reset cycle through the dashboard API:
+ * stop → wait → reset → wait → start.
+ * This is called between tests to ensure a clean EV state.
+ *
+ * @param request - Playwright APIRequestContext
+ */
 async function resetCdsBetweenTests(request: any) {
     console.log('[CDS] Reset between tests...');
     try {
         await request.post(`${CONFIG.dashboardUrl}/i/${cdsId}/stop`);
-        await new Promise(r => setTimeout(r, 2000));
+        await new Promise((resolve) => setTimeout(resolve, 2000));
         await request.post(`${CONFIG.dashboardUrl}/i/${cdsId}/reset`);
-        await new Promise(r => setTimeout(r, 3000));
+        await new Promise((resolve) => setTimeout(resolve, 3000));
         await request.post(`${CONFIG.dashboardUrl}/i/${cdsId}/start`);
         console.log('[CDS] Reset complete, simulation restarted');
     } catch {
+        // Non-fatal: the next test may still succeed even if reset partially failed
         console.log('[CDS] Reset error (non-fatal)');
     }
 }
 
+/** Accumulated results for the final summary report */
 const results: { suite: string; testCase: string; verdict: string; duration: number }[] = [];
+
+/** Tracks whether the OCTT session has been started */
 let sessionStarted = false;
 
+// Run tests sequentially — OCTT does not support parallel sessions
 test.describe.configure({ mode: 'serial' });
+
+// Global timeout: 10 minutes per test (reboot tests are slow)
 test.setTimeout(600_000);
 
-// ── Phase 0: Lab Setup ──
+// ══════════════════════════════════════════════════════════════
+// PHASE 0: Lab Setup
+// Configure the CDS EV simulator before any OCTT tests run.
+// ══════════════════════════════════════════════════════════════
 
-test('0a. Regista instância CDS no dashboard', async ({ request }) => {
+test('0a. Register CDS instance in dashboard', async ({ request }) => {
     const resp = await request.post(`${CONFIG.dashboardUrl}/instances`, {
         data: { id: cdsId, ip: CONFIG.cdsIp, port: CONFIG.cdsPort },
     });
     expect(resp.status()).toBe(200);
 });
 
-test('0b. Configura CDS (ISO 15118, DC, sink)', async ({ request }) => {
+test('0b. Configure CDS (ISO 15118, DC, sink)', async ({ request }) => {
     const resp = await request.post(`${CONFIG.dashboardUrl}/i/${cdsId}/configure-cds`, {
         data: { specification: 3, chargeMode: 2, sinkId: CONFIG.sinkId, mode: 2 },
     });
@@ -91,7 +163,7 @@ test('0b. Configura CDS (ISO 15118, DC, sink)', async ({ request }) => {
     expect(body.ok).toBeTruthy();
 });
 
-test('0c. Configura parâmetros EV (900V, 300A, 50kW)', async ({ request }) => {
+test('0c. Configure EV parameters (900V, 300A, 50kW)', async ({ request }) => {
     const resp = await request.post(`${CONFIG.dashboardUrl}/i/${cdsId}/configure-ev`, {
         data: {
             EVMaximumVoltageLimit: 900,
@@ -109,27 +181,34 @@ test('0c. Configura parâmetros EV (900V, 300A, 50kW)', async ({ request }) => {
 
 test('0d. Reset + Start CDS', async ({ request }) => {
     await request.post(`${CONFIG.dashboardUrl}/i/${cdsId}/reset`);
-    await new Promise(r => setTimeout(r, 3000));
+    await new Promise((resolve) => setTimeout(resolve, 3000));
     await request.post(`${CONFIG.dashboardUrl}/i/${cdsId}/start`);
-    console.log('[CDS] Simulação EV iniciada');
+    console.log('[CDS] EV simulation started');
 });
 
-// ── Phase 1: OCTT Session ──
+// ══════════════════════════════════════════════════════════════
+// PHASE 1: OCTT Session
+// Start the OCTT test session. This must succeed before any
+// test cases can be executed.
+// ══════════════════════════════════════════════════════════════
 
-test('1. Inicia sessão OCTT', async ({ request }) => {
+test('1. Start OCTT session', async ({ request }) => {
     const resp = await request.post(
-        `${CONFIG.octtBaseUrl}/configurations/${CONFIG.configurationName}/sessions`,
+        `${CONFIG.octtBaseUrl}${versionedPath}/session/start/${encodeURIComponent(CONFIG.configurationName)}`,
         { headers: authHeader }
     );
     if (!resp.ok()) {
-        const err = await resp.text();
-        console.warn(`[OCTT] Start session warning (${resp.status()}): ${err.slice(0, 300)}`);
+        const errorText = await resp.text();
+        console.warn(`[OCTT] Start session warning (${resp.status()}): ${errorText.slice(0, 300)}`);
     }
     sessionStarted = true;
-    console.log(`[OCTT] Sessão iniciada: ${CONFIG.configurationName}`);
+    console.log(`[OCTT] Session started: ${CONFIG.configurationName}`);
 });
 
-// ── Phase 2: Execute all test suites ──
+// ══════════════════════════════════════════════════════════════
+// PHASE 2: Execute all test suites
+// Iterate over every suite and run each test case via the OCTT API.
+// ══════════════════════════════════════════════════════════════
 
 Object.entries(testSuites).forEach(([suiteName, tests]) => {
     test.describe(`Suite: ${suiteName}`, () => {
@@ -137,22 +216,48 @@ Object.entries(testSuites).forEach(([suiteName, tests]) => {
         for (const testId of tests) {
 
             test(`Execute ${testId}`, async ({ request }) => {
-                console.log(`[OCTT] Executando ${testId}...`);
+                console.log(`[OCTT] Executing ${testId}...`);
 
+                // ── Fallback session start ──
+                // When running with --grep (subset of tests), the global
+                // "Start OCTT session" test may be skipped. Each test case
+                // therefore checks sessionStarted and starts the session
+                // itself if needed. This ensures standalone test execution
+                // works without requiring the full suite to run.
+                if (!sessionStarted) {
+                    console.log('[OCTT] Session not started, starting now...');
+                    const sessionResp = await request.post(
+                        `${CONFIG.octtBaseUrl}${versionedPath}/session/start/${encodeURIComponent(CONFIG.configurationName)}`,
+                        { headers: authHeader }
+                    );
+                    if (!sessionResp.ok()) {
+                        const errorText = await sessionResp.text();
+                        console.warn(`[OCTT] Session start warning (${sessionResp.status()}): ${errorText.slice(0, 300)}`);
+                    } else {
+                        console.log(`[OCTT] Session started: ${CONFIG.configurationName}`);
+                    }
+                    sessionStarted = true;
+                    await new Promise((resolve) => setTimeout(resolve, 3000));
+                }
+
+                // Execute the test case via OCTT REST API
                 const resp = await request.post(
                     `${CONFIG.octtBaseUrl}/testcases/${testId}/execute`,
                     { headers: authHeader, timeout: 600_000 }
                 );
 
+                // Handle HTTP-level failures (e.g., OCTT crashed, network error)
                 if (!resp.ok()) {
-                    console.error(`[ERROR] ${testId} HTTP ${resp.status()}`);
+                    const errorBody = await resp.text();
+                    console.error(`[ERROR] ${testId} HTTP ${resp.status()}: ${errorBody.slice(0, 500)}`);
                     results.push({ suite: suiteName, testCase: testId, verdict: 'error', duration: 0 });
                     console.log(`  → ERROR (0s)`);
-                    console.log(`[CDS] Resetting before next test...`);
+                    console.log('[CDS] Resetting before next test...');
                     await resetCdsBetweenTests(request);
                     return;
                 }
 
+                // Parse the OCTT verdict from the response body
                 const body = await resp.json();
                 const verdict = (body.data?.[0]?.verdict ?? 'ERROR').toLowerCase();
                 const duration = body.data?.[0]?.duration ?? 0;
@@ -160,8 +265,10 @@ Object.entries(testSuites).forEach(([suiteName, tests]) => {
                 results.push({ suite: suiteName, testCase: testId, verdict, duration });
                 console.log(`  → ${verdict.toUpperCase()} (${duration}s)`);
 
+                // Reset CDS between tests that modify charging state,
+                // except for maintenance builtins which are stateless.
                 if (!testId.startsWith('tc_bi_') && needsCdsReset(suiteName, testId)) {
-                    console.log(`[CDS] Resetting before next test...`);
+                    console.log('[CDS] Resetting before next test...');
                     await resetCdsBetweenTests(request);
                 }
             });
@@ -169,48 +276,53 @@ Object.entries(testSuites).forEach(([suiteName, tests]) => {
     });
 });
 
-// ── Phase 3: Tear down ──
+// ══════════════════════════════════════════════════════════════
+// PHASE 3: Tear down
+// Print the certification summary, stop the OCTT session,
+// and return the CDS to a safe idle state.
+// ══════════════════════════════════════════════════════════════
 
 test.afterAll(async ({ request }) => {
     console.log('\n══════════════════════════════════════════');
     console.log('           CERTIFICATION SUMMARY           ');
     console.log('══════════════════════════════════════════');
 
-    const passed = results.filter(r => r.verdict === 'pass').length;
-    const failed = results.filter(r => r.verdict === 'fail').length;
-    const inconc = results.filter(r => r.verdict === 'inconc').length;
-    const errors = results.filter(r => r.verdict === 'error').length;
+    const passed = results.filter((r) => r.verdict === 'pass').length;
+    const failed = results.filter((r) => r.verdict === 'fail').length;
+    const inconc = results.filter((r) => r.verdict === 'inconc').length;
+    const errors = results.filter((r) => r.verdict === 'error').length;
     const total = results.length;
 
     console.log(`Total: ${total} | PASS: ${passed} | FAIL: ${failed} | INCONC: ${inconc} | ERROR: ${errors}`);
     console.log(`Pass rate: ${total > 0 ? Math.round((passed / total) * 100) : 0}%\n`);
 
-    for (const r of results) {
-        if (r.verdict !== 'pass') {
-            console.log(`  ❌ [${r.suite}] ${r.testCase} → ${r.verdict.toUpperCase()}`);
+    // List all non-passing tests for quick triage
+    for (const result of results) {
+        if (result.verdict !== 'pass') {
+            console.log(`  ❌ [${result.suite}] ${result.testCase} → ${result.verdict.toUpperCase()}`);
         }
     }
 
-    // Parar sessão OCTT
+    // Stop the OCTT session to free the SUT connection
     if (sessionStarted) {
         try {
             const resp = await request.post(
-                `${CONFIG.octtBaseUrl}/configurations/${CONFIG.configurationName}/sessions/stop`,
+                `${CONFIG.octtBaseUrl}/session/stop`,
                 { headers: authHeader }
             );
-            console.log(`\n[OCTT] Sessão parada (${resp.status()})`);
+            console.log(`\n[OCTT] Session stopped (${resp.status()})`);
         } catch {
-            console.log('[OCTT] Erro ao parar sessão');
+            console.log('[OCTT] Error stopping session');
         }
     }
 
-    // Cleanup CDS
+    // Cleanup CDS: stop simulation and reset to idle
     console.log('\n🛡️ CDS Cleanup...');
     try {
         await request.post(`${CONFIG.dashboardUrl}/i/${cdsId}/stop`);
-        await new Promise(r => setTimeout(r, 2000));
+        await new Promise((resolve) => setTimeout(resolve, 2000));
         await request.post(`${CONFIG.dashboardUrl}/i/${cdsId}/reset`);
-        console.log('[CDS] Parada e reset concluído');
+        console.log('[CDS] Stop and reset complete');
     } catch {
         console.log('[CDS] Cleanup error (non-fatal)');
     }

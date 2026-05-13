@@ -4,28 +4,47 @@
 
 import type { ReportEntry } from "../connectors/octt/types.js";
 
+/**
+ * Structured summary of a certification test execution batch.
+ */
 export interface ExecutionSummary {
+    /** ISO timestamp when the summary was generated */
     timestamp: string;
+    /** OCTT configuration profile used */
     configuration: string;
+    /** OCPP version under test */
     ocppVersion: string;
+    /** Total number of test cases executed */
     totalTests: number;
     passed: number;
     failed: number;
     inconclusive: number;
     errors: number;
+    /** Formatted pass rate percentage */
     passRate: string;
     duration: {
+        /** Total execution time in milliseconds */
         totalMs: number;
+        /** Human-readable duration string */
         formatted: string;
     };
+    /** Non-passing tests with their profile */
     failedTests: { name: string; verdict: string; profile: string }[];
+    /** Failures in certification-blocking profiles */
     certificationBlockers: string[];
 }
 
+/**
+ * Certification profiles that are considered blocking.
+ * A failure in any of these profiles prevents certification approval.
+ */
 const BLOCKING_PROFILES = ["Core", "Advanced Security", "Smart Charging"];
 
 /**
  * Produces a structured summary from a batch of OCTT test reports.
+ *
+ * @param reports - Array of OCTT report entries
+ * @returns Execution summary with statistics and blocker list
  */
 export function summarize(reports: ReportEntry[]): ExecutionSummary {
     if (reports.length === 0) {
@@ -59,8 +78,9 @@ export function summarize(reports: ReportEntry[]): ExecutionSummary {
             profile: r.category.replace(/[\[\]]/g, ""),
         }));
 
+    // Identify failures in certification-critical profiles
     const certificationBlockers = failedTests
-        .filter((t) => BLOCKING_PROFILES.some((p) => t.profile.includes(p)))
+        .filter((t) => BLOCKING_PROFILES.some((profile) => t.profile.includes(profile)))
         .map((t) => `${t.name} (${t.verdict}) — blocks [${t.profile}]`);
 
     return {
@@ -84,6 +104,9 @@ export function summarize(reports: ReportEntry[]): ExecutionSummary {
 
 /**
  * Formats a summary into a human-readable markdown report.
+ *
+ * @param summary - Execution summary data
+ * @returns Markdown string suitable for Slack, email, or wiki
  */
 export function formatSummaryMarkdown(summary: ExecutionSummary): string {
     const lines = [
@@ -104,7 +127,7 @@ export function formatSummaryMarkdown(summary: ExecutionSummary): string {
 
     if (summary.certificationBlockers.length > 0) {
         lines.push(``, `## 🚨 Certification Blockers`);
-        summary.certificationBlockers.forEach((b) => lines.push(`- ${b}`));
+        summary.certificationBlockers.forEach((blocker) => lines.push(`- ${blocker}`));
     }
 
     if (summary.failedTests.length > 0) {
@@ -119,6 +142,12 @@ export function formatSummaryMarkdown(summary: ExecutionSummary): string {
     return lines.join("\n");
 }
 
+/**
+ * Converts a duration in milliseconds to a human-readable string.
+ *
+ * @param ms - Duration in milliseconds
+ * @returns Formatted string (e.g., "2h 15m 30s")
+ */
 function formatDuration(ms: number): string {
     const seconds = Math.floor(ms / 1000);
     const minutes = Math.floor(seconds / 60);

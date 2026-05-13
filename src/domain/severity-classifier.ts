@@ -1,11 +1,25 @@
 // ══════════════════════════════════════════════════════════════
 // Severity Classifier — Maps OCTT results to Jira priority
 // ══════════════════════════════════════════════════════════════
+//
+// Scores each test failure on a 0-100 scale using four factors:
+//   1. Certification profile impact (core vs optional)
+//   2. Verdict type (error > fail > inconclusive)
+//   3. Functional block criticality
+//   4. Repeatability (if historical data is available)
+//
+// The score is then mapped to a Jira priority level.
+// ══════════════════════════════════════════════════════════════
 
 import type { ReportEntry } from "../connectors/octt/types.js";
 
+/** Jira priority levels ordered from highest to lowest urgency */
 export type JiraPriority = "Highest" | "High" | "Medium" | "Low" | "Lowest";
 
+/**
+ * Result of severity classification including the mapped priority,
+ * numeric score, and contributing factor descriptions.
+ */
 export interface SeverityResult {
     priority: JiraPriority;
     score: number;
@@ -29,6 +43,10 @@ const CRITICAL_BLOCKS = [
  * - Functional block criticality
  * - Verdict type (error vs inconclusive vs fail)
  * - Repeatability (based on verdict history, if available)
+ *
+ * @param report         - OCTT report entry for the failed test
+ * @param verdictHistory - Optional array of previous verdicts for repeatability scoring
+ * @returns Severity result with Jira priority mapping
  */
 export function classifySeverity(
     report: ReportEntry,

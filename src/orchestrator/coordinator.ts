@@ -11,27 +11,40 @@ import { mapToJiraIssue, mapToJiraComment } from "../domain/jira-mapper.js";
 import { summarize, formatSummaryMarkdown } from "../domain/execution-summarizer.js";
 import type { ReportEntry } from "../connectors/octt/types.js";
 
+/**
+ * Full configuration required to initialize the orchestrator.
+ * Combines connection details for all three external systems.
+ */
 export interface OrchestratorConfig {
+    /** OCTT API connection and versioning options */
     octt: {
         baseUrl: string;
         token: string;
         ocppVersion: string;
         role: "CS" | "CSMS";
     };
+    /** Keysight CDS network address */
     cds: {
         ip: string;
         port: number;
     };
+    /** Jira Cloud credentials and project */
     jira: {
         baseUrl: string;
         email: string;
         apiToken: string;
         projectKey: string;
     };
+    /** CDS hardware configuration (specification, charge mode, sink) */
     cdsConfig: CdsConfig;
+    /** Simulated EV electrical parameters */
     evConfig: EvConfig;
 }
 
+/**
+ * Finite state machine states for the orchestrator lifecycle.
+ * Used for progress reporting and UI status display.
+ */
 export type OrchestratorState =
     | "idle"
     | "connecting"
@@ -44,26 +57,49 @@ export type OrchestratorState =
     | "done"
     | "error";
 
+/**
+ * A single event in the orchestrator's internal log.
+ */
 export interface OrchestratorEvent {
+    /** ISO timestamp of the event */
     timestamp: string;
+    /** Orchestrator state at the time of the event */
     state: OrchestratorState;
+    /** Human-readable message */
     message: string;
+    /** Optional structured data attached to the event */
     data?: unknown;
 }
 
+/**
+ * Coordinates the full certification pipeline:
+ *   1. Lab preparation (CDS connect + configure)
+ *   2. Test execution (OCTT session + run tests)
+ *   3. Result processing (Jira sync + summary generation)
+ *   4. Cleanup (stop CDS, close session)
+ *
+ * The orchestrator maintains an internal event log that can be
+ * streamed to the dashboard UI for real-time progress visibility.
+ */
 export class Orchestrator {
     private octt: OcttClient;
     private cds: CdsClient;
     private jira: JiraClient;
     private state: OrchestratorState = "idle";
-    private log: OrchestratorEvent[] = [];
+    private eventLog: OrchestratorEvent[] = [];
 
+    /**
+     * @param config - Complete orchestrator configuration
+     */
     constructor(private config: OrchestratorConfig) {
         this.octt = new OcttClient(config.octt);
         this.cds = new CdsClient(config.cds.ip, config.cds.port);
         this.jira = new JiraClient(config.jira);
     }
 
+    /**
+     * Records an event to the internal log and echoes it to the console.
+     */
     private emit(message: string, data?: unknown): void {
         const event: OrchestratorEvent = {
             timestamp: new Date().toISOString(),
@@ -71,25 +107,40 @@ export class Orchestrator {
             message,
             data,
         };
-        this.log.push(event);
+        this.eventLog.push(event);
         console.log(`[${event.state}] ${event.message}`);
     }
 
+    /**
+     * Returns a shallow copy of the orchestrator's event log.
+     */
     getLog(): OrchestratorEvent[] {
-        return [...this.log];
+        return [...this.eventLog];
     }
 
+    /**
+     * Returns the current orchestrator state.
+     */
     getState(): OrchestratorState {
         return this.state;
     }
 
     // ── Phase 1: Connect & Prepare Lab ──
 
+    /**
+     * Prepares the test lab:
+     *   1. Connects to the CDS
+     *   2. Verifies OCTT SUT status
+     *   3. Resets the CDS
+     *   4. Configures CDS and EV parameters
+     *
+     * @returns true if all preparation steps succeeded
+     */
     async prepareLab(): Promise<boolean> {
         try {
             this.state = "connecting";
 
-            // Connect CDS
+            // Establish TCP connection to Keysight CDS
             this.emit("Connecting to CDS...");
             const cdsConnected = await this.cds.connect();
             if (!cdsConnected) {
@@ -99,12 +150,12 @@ export class Orchestrator {
             }
             this.emit("CDS connected");
 
-            // Check SUT status
+            // Verify that the OCTT server sees the SUT as reachable
             this.emit("Checking SUT connection...");
             const sutStatus = await this.octt.getSutStatus();
             this.emit("SUT status retrieved", sutStatus);
 
-            // Configure CDS
+            // Reset CDS to a known idle state before applying new config
             this.state = "configuring_lab";
             this.emit("Resetting CDS...");
             const resetOk = await this.cds.reset();
@@ -115,6 +166,7 @@ export class Orchestrator {
             }
             this.emit("CDS reset complete");
 
+            // Apply charging specification and mode
             this.emit("Configuring CDS...");
             const configOk = await this.cds.configureCds(this.config.cdsConfig);
             if (!configOk) {
@@ -123,6 +175,7 @@ export class Orchestrator {
                 return false;
             }
 
+            // Apply EV electrical parameters (voltage/current limits, etc.)
             this.emit("Configuring EV parameters...");
             const evOk = await this.cds.configureEv(this.config.evConfig);
             if (!evOk) {
@@ -142,6 +195,16 @@ export class Orchestrator {
 
     // ── Phase 2: Execute Tests ──
 
+    /**
+     * Executes test cases through OCTT:
+     *   1. Starts an OCTT session
+     *   2. Starts the CDS EV simulation
+     *   3. Runs each test case sequentially
+     *
+     * @param configurationName - OCTT configuration profile to use
+     * @param testcaseNames     - Optional subset of tests (runs all if omitted)
+     * @returns Array of OCTT report entries
+     */
     async executeTests(configurationName: string, testcaseNames?: string[]): Promise<ReportEntry[]> {
         try {
             this.state = "starting_session";
@@ -157,7 +220,7 @@ export class Orchestrator {
                 return [];
             }
 
-            // Get test cases if not specified
+            // If no explicit test list provided, fetch all cases from OCTT
             if (!testcaseNames || testcaseNames.length === 0) {
                 const testCases = await this.octt.listTestCases(configurationName);
                 testcaseNames = testCases.data.testcasesData
@@ -165,13 +228,13 @@ export class Orchestrator {
                 this.emit(`Found ${testcaseNames.length} test cases`);
             }
 
-            // Execute each test
+            // Execute each test sequentially
             this.state = "running_tests";
             const allResults: ReportEntry[] = [];
 
-            for (let i = 0; i < testcaseNames.length; i++) {
-                const name = testcaseNames[i];
-                this.emit(`[${i + 1}/${testcaseNames.length}] Executing: ${name}`);
+            for (let index = 0; index < testcaseNames.length; index++) {
+                const name = testcaseNames[index];
+                this.emit(`[${index + 1}/${testcaseNames.length}] Executing: ${name}`);
 
                 try {
                     const result = await this.octt.executeTestCase(name);
@@ -196,6 +259,15 @@ export class Orchestrator {
 
     // ── Phase 3: Process Results & Sync Jira ──
 
+    /**
+     * Processes test results and syncs failures to Jira:
+     *   - Creates new issues for unseen failures
+     *   - Comments on existing open issues
+     *   - Reopens closed issues when failures recur (regression detection)
+     *
+     * @param reports - OCTT report entries from test execution
+     * @returns Summary of Jira actions taken
+     */
     async processResults(reports: ReportEntry[]): Promise<{
         created: string[];
         commented: string[];
@@ -205,9 +277,9 @@ export class Orchestrator {
         const result = { created: [] as string[], commented: [] as string[], reopened: [] as string[], summary: "" };
 
         try {
-            // Filter failures
+            // Only non-passing results need Jira attention
             const failures = reports.filter(
-                (r) => r.verdict.toLowerCase() !== "pass"
+                (report) => report.verdict.toLowerCase() !== "pass"
             );
             this.emit(`Processing ${failures.length} failures out of ${reports.length} results`);
 
@@ -225,25 +297,25 @@ export class Orchestrator {
                         break;
                     }
                     case "comment": {
-                        const key = dedupResult.existingIssue!.key;
+                        const issueKey = dedupResult.existingIssue!.key;
                         const comment = mapToJiraComment(report);
-                        await this.jira.addComment(key, comment);
-                        result.commented.push(key);
-                        this.emit(`Commented on ${key}`);
+                        await this.jira.addComment(issueKey, comment);
+                        result.commented.push(issueKey);
+                        this.emit(`Commented on ${issueKey}`);
                         break;
                     }
                     case "reopen": {
-                        const key = dedupResult.existingIssue!.key;
+                        const issueKey = dedupResult.existingIssue!.key;
                         const comment = mapToJiraComment(report);
-                        await this.jira.transitionByName(key, "Reopen", comment);
-                        result.reopened.push(key);
-                        this.emit(`Reopened ${key} (regression)`);
+                        await this.jira.transitionByName(issueKey, "Reopen", comment);
+                        result.reopened.push(issueKey);
+                        this.emit(`Reopened ${issueKey} (regression)`);
                         break;
                     }
                 }
             }
 
-            // Generate summary
+            // Generate markdown summary for Slack/email/dashboard display
             this.state = "generating_summary";
             const summaryData = summarize(reports);
             result.summary = formatSummaryMarkdown(summaryData);
@@ -260,6 +332,13 @@ export class Orchestrator {
 
     // ── Full Pipeline ──
 
+    /**
+     * Runs the complete pipeline: lab preparation → test execution → result processing.
+     * This is a convenience wrapper around the three main phases.
+     *
+     * @param configurationName - OCTT configuration profile
+     * @param testcaseNames     - Optional subset of tests
+     */
     async run(configurationName: string, testcaseNames?: string[]): Promise<void> {
         this.emit("=== Starting full certification pipeline ===");
 
@@ -281,6 +360,13 @@ export class Orchestrator {
 
     // ── Cleanup ──
 
+    /**
+     * Performs graceful shutdown:
+     *   - Stops the CDS EV simulation
+     *   - Sets CP state to A1 (disconnected)
+     *   - Closes the CDS TCP socket
+     *   - Stops the OCTT session
+     */
     async cleanup(): Promise<void> {
         try {
             await this.cds.stop();
