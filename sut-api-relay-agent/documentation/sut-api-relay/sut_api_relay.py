@@ -36,7 +36,7 @@ async def relay_loop():
     
     logger.info(f"Connecting to {uri}")
     
-    async with websockets.connect(uri, extra_headers=headers) as ws:
+    async with websockets.connect(uri, additional_headers=headers) as ws:
         logger.info("Connected to OCTT WebSocket")
         
         async with aiohttp.ClientSession() as session:
