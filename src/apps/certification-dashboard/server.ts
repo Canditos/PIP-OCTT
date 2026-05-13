@@ -647,6 +647,9 @@ app.post("/api/pipeline/run-playwright", async (req: Request, res: Response) => 
 
     // Auto-detect reboot tests and adjust timeouts
     const hasRebootTests = selectedTests && selectedTests.some((t: string) => REBOOT_TESTS.includes(t));
+    console.log(`[DEBUG] Selected tests: ${JSON.stringify(selectedTests)}`);
+    console.log(`[DEBUG] REBOOT_TESTS: ${JSON.stringify(REBOOT_TESTS)}`);
+    console.log(`[DEBUG] hasRebootTests: ${hasRebootTests}`);
     let rebootTimeoutsApplied = false;
 
     if (hasRebootTests) {
@@ -654,6 +657,16 @@ app.post("/api/pipeline/run-playwright", async (req: Request, res: Response) => 
         broadcast("pipeline", { state: "starting", message: "Reboot tests detected - applying extended timeouts (600/650)..." });
         try {
             const octt = new OcttClient(effectiveOcttConfig);
+            
+            // Stop session if active (OCTT requires this before saving config)
+            try {
+                await octt.stopSession();
+                log("info", "Stopped existing session to update config", "playwright");
+                await new Promise(r => setTimeout(r, 2000)); // Wait for session to fully stop
+            } catch {
+                // No active session, ignore
+            }
+            
             const current = await octt.getConfiguration(configName);
             const updatedConfig: Record<string, unknown> = { ...current.data.config };
             updatedConfig.max_timeout_period = REBOOT_TIMEOUTS.maxTimeoutPeriod;
@@ -783,6 +796,16 @@ app.post("/api/pipeline/run-playwright", async (req: Request, res: Response) => 
             log("info", "Restoring default timeouts...", "playwright");
             try {
                 const octt = new OcttClient(effectiveOcttConfig);
+                
+                // Stop session if active (OCTT requires this before saving config)
+                try {
+                    await octt.stopSession();
+                    log("info", "Stopped existing session to restore config", "playwright");
+                    await new Promise(r => setTimeout(r, 2000));
+                } catch {
+                    // No active session, ignore
+                }
+                
                 const current = await octt.getConfiguration(configName);
                 const updatedConfig: Record<string, unknown> = { ...current.data.config };
                 updatedConfig.max_timeout_period = DEFAULT_TIMEOUTS.maxTimeoutPeriod;
@@ -1298,3 +1321,4 @@ app.listen(PORT, () => {
 
 process.on("SIGINT", () => { stopRelayAgent(); process.exit(0); });
 process.on("SIGTERM", () => { stopRelayAgent(); process.exit(0); });
+
