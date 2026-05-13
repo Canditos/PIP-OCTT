@@ -426,8 +426,9 @@ const testSuites: Record<string, string[]> = {
     "Security": ["TC_073_CS", "TC_074_CS", "TC_075_1_CS", "TC_075_2_CS", "TC_076_CS", "TC_077_CS", "TC_078_CS", "TC_079_CS", "TC_080_CS", "TC_081_CS", "TC_083_CS", "TC_084_CS", "TC_085_CS", "TC_086_CS", "TC_087_CS"],
     "SmartCharging": ["TC_056_CS", "TC_057_CS", "TC_058_1_CS", "TC_058_2_CS", "TC_059_CS", "TC_060_CS", "TC_066_CS", "TC_067_CS", "TC_072_CS", "TC_082_CS"],
     "Transactions": ["TC_003_CS", "TC_004_1_CS", "TC_004_2_CS", "TC_005_1_CS", "TC_005_2_CS", "TC_005_3_CS", "TC_007_1_CS", "TC_007_2_CS", "TC_036_CS", "TC_037_1_CS", "TC_037_2_CS", "TC_037_3_CS", "TC_038_CS", "TC_039_CS", "TC_068_CS", "TC_069_CS"],
-    "REBOOT": ["TC_001_CS", "TC_002_CS", "TC_013_CS", "TC_014_CS", "TC_015_CS", "TC_016_CS", "TC_032_1_CS", "TC_032_2_CS", "TC_034_CS"],
 };
+
+const REBOOT_TESTS = ["TC_001_CS", "TC_002_CS", "TC_013_CS", "TC_014_CS", "TC_015_CS", "TC_016_CS", "TC_032_1_CS", "TC_032_2_CS", "TC_034_CS"];
 
 app.get("/api/testcases", (_req: Request, res: Response) => {
     res.json(testSuites);
@@ -644,6 +645,29 @@ app.post("/api/pipeline/run-playwright", async (req: Request, res: Response) => 
     const selectedTests = testcaseNames && testcaseNames.length > 0 ? testcaseNames : null;
     const configName = configurationName || "AUT_SID_SAT";
 
+    // Auto-detect reboot tests and adjust timeouts
+    const hasRebootTests = selectedTests && selectedTests.some((t: string) => REBOOT_TESTS.includes(t));
+    let rebootTimeoutsApplied = false;
+
+    if (hasRebootTests) {
+        log("info", "Reboot tests detected - applying extended timeouts", "playwright");
+        broadcast("pipeline", { state: "starting", message: "Reboot tests detected - applying extended timeouts (600/650)..." });
+        try {
+            const octt = new OcttClient(effectiveOcttConfig);
+            const current = await octt.getConfiguration(configName);
+            const updatedConfig: Record<string, unknown> = { ...current.data.config };
+            updatedConfig.max_timeout_period = REBOOT_TIMEOUTS.maxTimeoutPeriod;
+            updatedConfig.long_operation_timeout = REBOOT_TIMEOUTS.longOperationTimeout;
+            updatedConfig.max_time_deviation = REBOOT_TIMEOUTS.maxTimeDeviation;
+            await octt.saveConfiguration(configName, updatedConfig);
+            rebootTimeoutsApplied = true;
+            log("info", "Reboot timeouts applied", "playwright");
+            broadcast("pipeline", { state: "starting", message: "Reboot timeouts applied" });
+        } catch (e) {
+            log("warn", `Failed to apply reboot timeouts: ${e}. Continuing...`, "playwright");
+        }
+    }
+
     playwrightRunning = true;
     pipelineResults = [];
     broadcast("pipeline", { state: "starting", message: "Starting OCTT session..." });
@@ -752,6 +776,24 @@ app.post("/api/pipeline/run-playwright", async (req: Request, res: Response) => 
             log("info", "OCTT session stopped", "playwright");
         } catch (e) {
             log("warn", `OCTT stop session failed: ${e}`, "playwright");
+        }
+
+        // Restore default timeouts if reboot timeouts were applied
+        if (rebootTimeoutsApplied) {
+            log("info", "Restoring default timeouts...", "playwright");
+            try {
+                const octt = new OcttClient(effectiveOcttConfig);
+                const current = await octt.getConfiguration(configName);
+                const updatedConfig: Record<string, unknown> = { ...current.data.config };
+                updatedConfig.max_timeout_period = DEFAULT_TIMEOUTS.maxTimeoutPeriod;
+                updatedConfig.long_operation_timeout = DEFAULT_TIMEOUTS.longOperationTimeout;
+                updatedConfig.max_time_deviation = DEFAULT_TIMEOUTS.maxTimeDeviation;
+                await octt.saveConfiguration(configName, updatedConfig);
+                log("info", "Default timeouts restored", "playwright");
+                broadcast("pipeline", { state: "cleaning", message: "Default timeouts restored" });
+            } catch (e) {
+                log("warn", `Failed to restore default timeouts: ${e}`, "playwright");
+            }
         }
 
         pipelineResults = results.map(r => ({
