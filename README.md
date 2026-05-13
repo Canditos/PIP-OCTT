@@ -100,7 +100,7 @@ tests/                   # Testes unitários (Vitest)
 | `cds_disconnect` | Desconectar |
 | `cds_get_status` | Estado actual do CDS |
 | `cds_read_pid` | Ler um PID específico |
-| `cds_read_measurements` | Ler voltagem/corrente DC |
+| `cds_read_measurements` | Ler Tensão/corrente DC |
 | `cds_reset` | Reset do CDS |
 | `cds_start` | Iniciar simulação EV |
 | `cds_stop` | Parar simulação |
