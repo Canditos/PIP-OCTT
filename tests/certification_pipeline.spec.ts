@@ -133,7 +133,7 @@ Object.entries(testSuites).forEach(([suiteName, tests]) => {
 
                 const resp = await request.post(
                     `${CONFIG.octtBaseUrl}/testcases/${testId}/execute`,
-                    { headers: authHeader, timeout: 180_000 }
+                    { headers: authHeader, timeout: 600_000 }
                 );
 
                 if (!resp.ok()) {
