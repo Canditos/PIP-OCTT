@@ -14,6 +14,14 @@ const CONFIG = {
     configurationName: process.env.OCTT_CONFIG ?? 'AUT_SID_SAT',
 } as const;
 
+console.log('[PLAYWRIGHT ENV]', {
+    OCTT_BASE_URL: process.env.OCTT_BASE_URL ? 'set' : 'missing',
+    OCTT_TOKEN: process.env.OCTT_TOKEN ? 'set' : 'missing',
+    OCTT_CONFIG: process.env.OCTT_CONFIG,
+    CDS_IP: process.env.CDS_IP,
+    configurationName: CONFIG.configurationName,
+});
+
 const cdsId = `cds-${CONFIG.cdsIp.replace(/\./g, '-')}-${CONFIG.cdsPort}`;
 
 const authHeader = { Authorization: `Bearer ${CONFIG.octtToken}` };
