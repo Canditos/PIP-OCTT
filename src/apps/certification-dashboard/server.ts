@@ -1497,6 +1497,123 @@ app.post("/api/jira/upload", async (req: Request, res: Response) => {
     }
 });
 
+/**
+ * POST /api/jira/upload-execution
+ * Creates a comprehensive Test Execution summary issue in Jira
+ * after a certification run completes. Includes all test results,
+ * pass rate, SUT details, and firmware version.
+ */
+app.post("/api/jira/upload-execution", async (req: Request, res: Response) => {
+    const { sut, firmwareVersion, testPlan, environment } = req.body;
+
+    if (!sut || !firmwareVersion) {
+        return res.status(400).json({ ok: false, error: "SUT and firmwareVersion are required" });
+    }
+
+    log("info", `Jira execution upload: SUT=${sut} | FW=${firmwareVersion} | Plan=${testPlan || "N/A"}`, "jira");
+
+    try {
+        const { JiraClient } = await import("../../connectors/jira/index.js");
+        const client = new JiraClient(effectiveJiraConfig);
+
+        // Build execution summary from pipeline results
+        const passed = pipelineResults.filter((r) => r.verdict.toLowerCase() === "pass").length;
+        const failed = pipelineResults.filter((r) => r.verdict.toLowerCase() === "fail").length;
+        const inconc = pipelineResults.filter((r) => r.verdict.toLowerCase() === "inconc").length;
+        const errors = pipelineResults.filter((r) => r.verdict.toLowerCase() === "error").length;
+        const total = pipelineResults.length;
+        const passRate = total > 0 ? Math.round((passed / total) * 100) : 0;
+
+        const summary = `[OCPP 1.6] Test Execution — ${sut} | FW ${firmwareVersion} | ${passRate}% pass`;
+
+        // Build detailed description with results table
+        const descriptionLines = [
+            `h2. Test Execution Summary`,
+            ``,
+            `| *SUT* | ${sut} |`,
+            `| *Firmware Version* | ${firmwareVersion} |`,
+            `| *Test Plan* | ${testPlan || "N/A"} |`,
+            `| *Environment* | ${environment || "Production"} |`,
+            `| *Execution Date* | ${new Date().toISOString()} |`,
+            `| *OCPP Version* | 1.6 |`,
+            `| *Role* | Charging Station (CS) |`,
+            ``,
+            `h2. Results Overview`,
+            ``,
+            `| *Total* | *Passed* | *Failed* | *Inconclusive* | *Errors* | *Pass Rate* |`,
+            `| ${total} | ${passed} | ${failed} | ${inconc} | ${errors} | ${passRate}% |`,
+            ``,
+            `h2. Detailed Results`,
+            ``,
+            `| *Test Case* | *Suite* | *Verdict* | *Duration* |`,
+        ];
+
+        for (const result of pipelineResults) {
+            const suite = Object.entries(testSuites).find(([, tests]) =>
+                tests.includes(result.testCaseName)
+            )?.[0] || "Unknown";
+            descriptionLines.push(`| ${result.testCaseName} | ${suite} | ${result.verdict} | ${result.duration}s |`);
+        }
+
+        descriptionLines.push(
+            ``,
+            `h2. Non-Passing Tests`,
+            ``
+        );
+
+        const nonPassing = pipelineResults.filter((r) => r.verdict.toLowerCase() !== "pass");
+        if (nonPassing.length === 0) {
+            descriptionLines.push("All tests passed! 🎉");
+        } else {
+            for (const result of nonPassing) {
+                descriptionLines.push(`* ${result.testCaseName}: ${result.verdict} (${result.duration}s)`);
+            }
+        }
+
+        const description = descriptionLines.join("\n");
+
+        // Create the Test Execution issue
+        const issue = await client.createIssue({
+            summary,
+            description,
+            issueType: "Task",
+            priority: failed > 0 ? "High" : "Medium",
+            labels: ["ocpp", "certification", "test-execution", "ocpp1.6", sut.toLowerCase().replace(/\s+/g, "-")],
+        });
+
+        log("info", `Created Test Execution ${issue.key} in Jira`, "jira");
+
+        // Attach results as JSON file
+        const resultsJson = JSON.stringify({
+            meta: {
+                sut,
+                firmwareVersion,
+                testPlan,
+                environment,
+                executionDate: new Date().toISOString(),
+                ocppVersion: "1.6",
+                role: "CS",
+            },
+            summary: { total, passed, failed, inconc, errors, passRate },
+            results: pipelineResults,
+        }, null, 2);
+
+        const buffer = Buffer.from(resultsJson, "utf-8");
+        await client.addAttachment(issue.key, `test-results-${sut}-${firmwareVersion}.json`, buffer);
+        log("info", `Attached results JSON to ${issue.key}`, "jira");
+
+        res.json({
+            ok: true,
+            issueKey: issue.key,
+            url: `${effectiveJiraConfig.baseUrl}/browse/${issue.key}`,
+            summary: { total, passed, failed, inconc, errors, passRate },
+        });
+    } catch (error) {
+        log("error", `Jira execution upload failed: ${error}`, "jira");
+        res.status(500).json({ ok: false, error: String(error) });
+    }
+});
+
 // ══════════════════════════════════════════════════════════════
 // SECTION: SUT API (System Under Test)
 // OCTT calls these endpoints during test execution to simulate

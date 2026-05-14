@@ -298,6 +298,36 @@
 </div>
 </div>
 
+<!-- ══════════════════════════════════════════════════════════════
+     MODAL: Jira Upload (Auto-shows after pipeline completion)
+     Prompts for SUT details and uploads the full test execution
+     results to Jira as a Task with attached JSON report.
+     ══════════════════════════════════════════════════════════════ -->
+<div class="modal-bg" id="jira-upload-modal-bg" style="z-index:102">
+<div class="modal" style="width:min(600px,95vw)">
+  <div class="modal-head"><span>&#128227; Upload Results to Jira</span><span id="jira-upload-status" style="color:var(--text-dim)">Ready</span></div>
+  <div class="modal-body" style="padding:16px;display:flex;flex-direction:column;gap:10px">
+    <div style="font-size:10px;color:var(--text-dim);margin-bottom:4px">Fill in the test execution details below. All test results will be uploaded as a Jira issue with an attached JSON report.</div>
+    <label class="f">SUT (System Under Test) *</label>
+    <input type="text" id="inp-jira-sut" placeholder="e.g. Siemens SICHARGE D 22kW">
+    <label class="f">Firmware Version *</label>
+    <input type="text" id="inp-jira-fw" placeholder="e.g. v2.4.1">
+    <label class="f">Test Plan</label>
+    <input type="text" id="inp-jira-plan" placeholder="e.g. OCPP 1.6 Certification Q2">
+    <label class="f">Environment</label>
+    <input type="text" id="inp-jira-env" placeholder="e.g. Lab / Production">
+    <div id="jira-upload-summary" style="font-size:9px;color:var(--text-dim);font-family:var(--font);margin-top:4px;padding:8px;background:var(--bg);border-radius:4px;border:1px solid var(--border)">
+      Waiting for test results...
+    </div>
+  </div>
+  <div class="modal-tools" style="border-top:1px solid var(--border);padding:10px 18px">
+    <button class="sm" onclick="closeJiraUploadModal()">Cancel</button>
+    <div style="flex:1"></div>
+    <button class="sm primary" id="btn-jira-upload" onclick="uploadExecutionToJira()">&#128227; Upload to Jira</button>
+  </div>
+</div>
+</div>
+
 <script>
 // ══════════════════════════════════════════════════════════════
 // SECTION: Global State & Constants
@@ -355,7 +385,19 @@ function connectSSE(){
   // Status events → update service indicators
   es.addEventListener('status',e=>{const s=JSON.parse(e.data);if(s.cds)updSvc('cds',s.cds);if(s.octt)updSvc('octt',s.octt);if(s.jira)updSvc('jira',s.jira)});
   // Pipeline events → update banner, results, and button states
-  es.addEventListener('pipeline',e=>{const p=JSON.parse(e.data);updBanner(p);if(p.results)renderResults(p.results);if(p.state==='done'||p.state==='error'||p.state==='cancelled'){fetchResults();updBtns(false)}});
+  es.addEventListener('pipeline',e=>{
+    const p=JSON.parse(e.data);
+    updBanner(p);
+    if(p.results)renderResults(p.results);
+    if(p.state==='done'||p.state==='error'||p.state==='cancelled'){
+      fetchResults();
+      updBtns(false);
+      // Auto-show Jira upload modal 2 seconds after completion
+      if(p.results&&p.results.length>0){
+        setTimeout(()=>openJiraUploadModal(p.results),2000);
+      }
+    }
+  });
   es.onerror=()=>setTimeout(connectSSE,3000);
 }
 
@@ -1061,6 +1103,112 @@ function drawChart(key,data){
   ctx.closePath();
   ctx.fillStyle=(colors[key]||'#39bae6')+'18';
   ctx.fill();
+}
+
+// ══════════════════════════════════════════════════════════════
+// SECTION: Jira Upload Modal
+// Appears automatically after pipeline completion to upload
+// the full test execution results to Jira.
+// ══════════════════════════════════════════════════════════════
+
+/**
+ * Opens the Jira upload modal and pre-populates the summary.
+ * @param results - Array of test results from the completed run
+ */
+function openJiraUploadModal(results){
+  const modal=$('jira-upload-modal-bg');
+  modal.style.display='flex';
+  const passed=results.filter(r=>r.verdict==='pass').length;
+  const failed=results.filter(r=>r.verdict==='fail').length;
+  const inconc=results.filter(r=>r.verdict==='inconc').length;
+  const errors=results.filter(r=>r.verdict==='error').length;
+  const total=results.length;
+  const passRate=total?Math.round(passed/total*100):0;
+  $('jira-upload-status').textContent=`${total} tests | ${passRate}% pass`;
+  $('jira-upload-status').style.color=passRate>=80?'var(--pass)':passRate>=50?'var(--warn)':'var(--danger)';
+  $('jira-upload-summary').innerHTML=[
+    `<b>Execution Summary</b>`,
+    `Total: ${total} | Pass: ${passed} | Fail: ${failed} | Inconc: ${inconc} | Error: ${errors}`,
+    `Pass Rate: ${passRate}%`,
+    ``,
+    `<b>Non-passing tests:</b>`,
+    ...results.filter(r=>r.verdict!=='pass').map(r=>`  - ${r.testCase}: ${r.verdict} (${r.duration}s)`),
+    ...(results.filter(r=>r.verdict!=='pass').length===0?['  All tests passed!']:[])
+  ].join('<br>');
+  // Auto-populate from last used values (stored in localStorage)
+  const lastSut=localStorage.getItem('jira-last-sut')||'';
+  const lastFw=localStorage.getItem('jira-last-fw')||'';
+  const lastPlan=localStorage.getItem('jira-last-plan')||'';
+  const lastEnv=localStorage.getItem('jira-last-env')||'';
+  if(lastSut)$('inp-jira-sut').value=lastSut;
+  if(lastFw)$('inp-jira-fw').value=lastFw;
+  if(lastPlan)$('inp-jira-plan').value=lastPlan;
+  if(lastEnv)$('inp-jira-env').value=lastEnv;
+}
+
+/**
+ * Closes the Jira upload modal.
+ */
+function closeJiraUploadModal(){
+  $('jira-upload-modal-bg').style.display='none';
+}
+
+/**
+ * Uploads the completed test execution to Jira.
+ * Creates a Task with full results table + attached JSON.
+ */
+async function uploadExecutionToJira(){
+  const sut=$('inp-jira-sut').value.trim();
+  const fw=$('inp-jira-fw').value.trim();
+  const plan=$('inp-jira-plan').value.trim();
+  const env=$('inp-jira-env').value.trim();
+
+  if(!sut||!fw){
+    alert('SUT and Firmware Version are required');
+    return;
+  }
+
+  // Save for next time
+  localStorage.setItem('jira-last-sut',sut);
+  localStorage.setItem('jira-last-fw',fw);
+  if(plan)localStorage.setItem('jira-last-plan',plan);
+  if(env)localStorage.setItem('jira-last-env',env);
+
+  const btn=$('btn-jira-upload');
+  btn.disabled=true;
+  btn.textContent='Uploading...';
+
+  try{
+    const r=await fetch(API+'/api/jira/upload-execution',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({sut,firmwareVersion:fw,testPlan:plan,environment:env})
+    });
+    const j=await r.json();
+    if(j.ok){
+      $('jira-upload-status').textContent='Uploaded!';
+      $('jira-upload-status').style.color='var(--pass)';
+      $('jira-upload-summary').innerHTML=[
+        `<b>Upload successful!</b>`,
+        `Issue: <a href="${j.url}" target="_blank" style="color:var(--accent)">${j.issueKey}</a>`,
+        `Total: ${j.summary.total} | Pass: ${j.summary.passed} | Fail: ${j.summary.failed}`,
+        `Pass Rate: ${j.summary.passRate}%`
+      ].join('<br>');
+      btn.textContent='Uploaded!';
+      btn.style.borderColor='var(--pass)';
+      btn.style.color='var(--pass)';
+      addLog({timestamp:new Date().toISOString(),level:'success',message:`Jira upload: ${j.issueKey} (${j.url})`,service:'ui'});
+    }else{
+      throw new Error(j.error||'Unknown error');
+    }
+  }catch(e){
+    $('jira-upload-status').textContent='Upload failed';
+    $('jira-upload-status').style.color='var(--danger)';
+    btn.disabled=false;
+    btn.textContent='Retry Upload';
+    addLog({timestamp:new Date().toISOString(),level:'error',message:'Jira upload failed: '+e.message,service:'ui'});
+    alert('Upload failed: '+e.message);
+  }
 }
 
 // Start the dashboard
