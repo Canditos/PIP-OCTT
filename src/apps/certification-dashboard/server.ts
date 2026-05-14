@@ -409,6 +409,33 @@ app.post("/api/cds/check", async (req: Request, res: Response) => {
     }
 });
 
+/**
+ * GET /api/cds/measurements
+ * Reads live DC measurements from the CDS: voltage, current, SoC, and CP state.
+ * Used by the frontend real-time chart modal.
+ */
+app.get("/api/cds/measurements", async (_req: Request, res: Response) => {
+    const cds = new CdsClient(effectiveCdsIp, effectiveCdsPort);
+    try {
+        const ok = await cds.connect();
+        if (!ok) {
+            return res.status(503).json({ ok: false, error: "CDS not responding" });
+        }
+        const measurements = await cds.readMeasurements();
+        const status = cds.statusValue.getValue();
+        const flags = cds.getStatusDescription(status);
+        await cds.disconnect();
+        res.json({
+            ok: true,
+            timestamp: new Date().toISOString(),
+            ...measurements,
+            statusFlags: flags,
+        });
+    } catch (error) {
+        res.status(500).json({ ok: false, error: String(error) });
+    }
+});
+
 // ══════════════════════════════════════════════════════════════
 // SECTION: REST API — OCTT Actions
 // Endpoints for interacting with the OCTT API.

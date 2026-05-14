@@ -66,11 +66,18 @@
   .svc-dot.connected{background:var(--pass);box-shadow:0 0 6px var(--pass)}
   .svc-dot.running{background:var(--accent);animation:pulse 1.5s infinite}
   .svc-dot.error{background:var(--danger);box-shadow:0 0 6px var(--danger)}
+  .svc-dot.disconnected{background:var(--text-dim)}
+  .svc-dot.connecting{background:var(--warn);animation:pulse 1s infinite}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
   .svc-info{flex:1;min-width:0}.svc-name{font-size:11px;font-weight:600;color:var(--text-bright)}.svc-detail{font-size:9px;color:var(--text-dim);font-family:var(--font);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   main{flex:1;display:flex;flex-direction:column;overflow:hidden}
   .banner{padding:6px 16px;font-size:11px;font-weight:600;display:none;align-items:center;gap:8px}
   .banner.active{display:flex}.banner.running{background:color-mix(in srgb,var(--accent) 12%,transparent);color:var(--accent)}.banner.done{background:color-mix(in srgb,var(--pass) 12%,transparent);color:var(--pass)}.banner.error{background:color-mix(in srgb,var(--danger) 12%,transparent);color:var(--danger)}
+  /* CDS Live Charts */
+  .chart-box{background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px;flex:1;min-width:180px;display:flex;flex-direction:column;align-items:center}
+  .chart-title{font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px}
+  .chart-value{font-size:18px;font-weight:700;color:var(--text-bright);font-family:var(--font);margin-bottom:4px}
+  .chart-box canvas{width:100%;height:80px}
   .spinner{width:12px;height:12px;border:2px solid transparent;border-top-color:currentColor;border-radius:50%;animation:spin .7s linear infinite}
   @keyframes spin{to{transform:rotate(360deg)}}
   .logs{flex:1;overflow-y:auto;padding:8px 12px;font-family:var(--font);font-size:10px;line-height:1.5;background:var(--bg);border-bottom:1px solid var(--border)}
@@ -161,6 +168,7 @@
     <label class="f">Port</label><input type="number" id="inp-cds-port" placeholder="51001">
     <label class="f">Sink</label><input type="number" id="inp-sink" value="12">
     <label class="f">Profile</label><select id="sel-profile"><option value="CCS_900V_300A">CCS 900V/300A/50kW ISO15118</option><option value="CCS_500V_125A">CCS 500V/125A/25kW</option><option value="CCS_1000V_400A">CCS 1000V/400A/150kW</option><option value="CCS_DIN_500V_125A">DIN70121 500V/125A/50kW</option></select>
+    <button onclick="openCdsCharts()" style="width:100%;margin-top:8px;border-color:var(--accent);color:var(--accent)">&#128200; Live Charts</button>
   </div></div>
 
   <!-- Test case selector -->
@@ -257,6 +265,36 @@
     <button class="sm primary" onclick="closeModal()">Done</button>
   </div>
   <div class="modal-body" id="m-body"></div>
+</div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════
+     MODAL: CDS Live Charts
+     Real-time voltage, current, SoC, and CP state visualization.
+     Polls /api/cds/measurements every 2 seconds while open.
+     ══════════════════════════════════════════════════════════════ -->
+<div class="modal-bg" id="charts-modal-bg" style="z-index:101">
+<div class="modal" style="width:min(900px,95vw);max-height:90vh">
+  <div class="modal-head"><span>&#128200; CDS Live Measurements</span><span id="charts-status" style="color:var(--text-dim)">Connecting...</span></div>
+  <div class="modal-tools">
+    <button class="sm" onclick="toggleCharts()" id="btn-charts-toggle">&#9208; Pause</button>
+    <button class="sm" onclick="clearCharts()">&#128465; Clear</button>
+    <div style="flex:1"></div>
+    <button class="sm primary" onclick="closeCdsCharts()">Close</button>
+  </div>
+  <div class="modal-body" style="padding:12px;display:flex;flex-direction:column;gap:10px">
+    <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:space-between">
+      <div class="chart-box"><div class="chart-title">Voltage (V)</div><div class="chart-value" id="val-voltage">--</div><canvas id="chart-voltage" width="200" height="80"></canvas></div>
+      <div class="chart-box"><div class="chart-title">Current (A)</div><div class="chart-value" id="val-current">--</div><canvas id="chart-current" width="200" height="80"></canvas></div>
+      <div class="chart-box"><div class="chart-title">SoC (%)</div><div class="chart-value" id="val-soc">--</div><canvas id="chart-soc" width="200" height="80"></canvas></div>
+      <div class="chart-box"><div class="chart-title">CP State</div><div class="chart-value" id="val-cp">--</div><canvas id="chart-cp" width="200" height="80"></canvas></div>
+    </div>
+    <div style="font-size:9px;color:var(--text-dim);font-family:var(--font);padding:4px 0">
+      Status: <span id="charts-cds-status" style="color:var(--text-bright)">--</span> &middot;
+      Points: <span id="charts-points">0</span> &middot;
+      Interval: 2s
+    </div>
+  </div>
 </div>
 </div>
 
@@ -836,6 +874,134 @@ async function restoreDefaults(){
     el.textContent='Error: '+e.message;
     addLog({timestamp:new Date().toISOString(),level:'error',message:'Restore error: '+e.message,service:'ui'});
   }
+}
+
+// ══════════════════════════════════════════════════════════════
+// SECTION: CDS Live Charts
+// Real-time visualization of CDS measurements (voltage, current,
+// SoC, CP state) using HTML5 Canvas. Polls every 2 seconds.
+// ══════════════════════════════════════════════════════════════
+
+/** Max number of historical data points per chart */
+const CHART_MAX_POINTS=60;
+
+/** Chart data buffers: { voltage:[], current:[], soc:[], cp:[] } */
+const chartData={voltage:[],current:[],soc:[],cp:[]};
+
+/** Interval handle for the measurement polling loop */
+let chartsInterval=null;
+
+/** Whether polling is currently paused */
+let chartsPaused=false;
+
+/**
+ * Opens the CDS live charts modal and starts polling.
+ */
+function openCdsCharts(){
+  $('charts-modal-bg').style.display='flex';
+  chartsPaused=false;
+  $('btn-charts-toggle').innerHTML='&#9208; Pause';
+  $('charts-status').textContent='Polling...';
+  $('charts-status').style.color='var(--accent)';
+  pollMeasurements();
+  chartsInterval=setInterval(pollMeasurements,2000);
+}
+
+/**
+ * Closes the CDS live charts modal and stops polling.
+ */
+function closeCdsCharts(){
+  $('charts-modal-bg').style.display='none';
+  if(chartsInterval){clearInterval(chartsInterval);chartsInterval=null}
+}
+
+/**
+ * Toggles polling pause/resume.
+ */
+function toggleCharts(){
+  chartsPaused=!chartsPaused;
+  $('btn-charts-toggle').innerHTML=chartsPaused?'&#9654; Resume':'&#9208; Pause';
+  $('charts-status').textContent=chartsPaused?'Paused':'Polling...';
+  $('charts-status').style.color=chartsPaused?'var(--warn)':'var(--accent)';
+}
+
+/**
+ * Clears all chart data buffers.
+ */
+function clearCharts(){
+  chartData.voltage=[];chartData.current=[];chartData.soc=[];chartData.cp=[];
+  ['voltage','current','soc','cp'].forEach(k=>drawChart(k,chartData[k]));
+  $('charts-points').textContent='0';
+}
+
+/**
+ * Fetches current measurements from the CDS and updates displays.
+ */
+async function pollMeasurements(){
+  if(chartsPaused)return;
+  try{
+    const r=await fetch(API+'/api/cds/measurements');
+    const j=await r.json();
+    if(!j.ok){
+      $('charts-status').textContent='CDS error: '+j.error;
+      $('charts-status').style.color='var(--danger)';
+      $('charts-cds-status').textContent='Error';
+      return;
+    }
+    // Update numeric displays
+    $('val-voltage').textContent=j.voltage!==null?j.voltage.toFixed(1)+' V':'--';
+    $('val-current').textContent=j.current!==null?j.current.toFixed(1)+' A':'--';
+    $('val-soc').textContent=j.soc!==null?j.soc.toFixed(1)+' %':'--';
+    const cpLabels={1:'A1',2:'A2',3:'B1',4:'B2',5:'C1',6:'C2',7:'D1',8:'D2',9:'E',10:'F',11:'Error'};
+    $('val-cp').textContent=j.cpStateRaw!==null?(cpLabels[Math.round(j.cpStateRaw)]||'State '+Math.round(j.cpStateRaw)):'--';
+    $('charts-cds-status').textContent=(j.statusFlags||[]).join(', ')||'Idle';
+    $('charts-status').textContent='Live';
+    $('charts-status').style.color='var(--pass)';
+    // Push to buffers
+    if(j.voltage!==null)chartData.voltage.push(j.voltage);
+    if(j.current!==null)chartData.current.push(j.current);
+    if(j.soc!==null)chartData.soc.push(j.soc);
+    if(j.cpStateRaw!==null)chartData.cp.push(j.cpStateRaw);
+    // Trim buffers
+    Object.keys(chartData).forEach(k=>{if(chartData[k].length>CHART_MAX_POINTS)chartData[k].shift()});
+    // Draw
+    ['voltage','current','soc','cp'].forEach(k=>drawChart(k,chartData[k]));
+    $('charts-points').textContent=String(chartData.voltage.length);
+  }catch(e){
+    $('charts-status').textContent='Network error';
+    $('charts-status').style.color='var(--danger)';
+  }
+}
+
+/**
+ * Draws a sparkline chart on a canvas element.
+ * @param key   - Chart key (voltage, current, soc, cp)
+ * @param data  - Array of numeric values
+ */
+function drawChart(key,data){
+  const canvas=$(`chart-${key}`);
+  const ctx=canvas.getContext('2d');
+  const w=canvas.width,h=canvas.height;
+  ctx.clearRect(0,0,w,h);
+  if(data.length<2)return;
+  const min=Math.min(...data),max=Math.max(...data);
+  const range=max-min||1;
+  const colors={voltage:'#39bae6',current:'#aad94c',soc:'#ffb454',cp:'#d957ff'};
+  ctx.strokeStyle=colors[key]||'#39bae6';
+  ctx.lineWidth=2;
+  ctx.beginPath();
+  data.forEach((v,i)=>{
+    const x=(i/(data.length-1))*w;
+    const y=h-((v-min)/range)*h;
+    if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
+  });
+  ctx.stroke();
+  // Fill area under line
+  ctx.lineTo(w,h);
+  ctx.lineTo(0,h);
+  ctx.closePath();
+  ctx.fillStyle=(colors[key]||'#39bae6')+'18';
+  ctx.fill();
 }
 
 // Start the dashboard
