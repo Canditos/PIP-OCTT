@@ -432,7 +432,12 @@ app.get("/api/cds/measurements", async (_req: Request, res: Response) => {
             statusFlags: flags,
         });
     } catch (error) {
-        res.status(500).json({ ok: false, error: String(error) });
+        const errMsg = error instanceof Error ? error.message : String(error);
+        const isTimeout = errMsg.includes("timeout") || errMsg.includes("ETIMEDOUT") || errMsg.includes("ECONNREFUSED");
+        const friendly = isTimeout
+            ? `CDS timeout (${effectiveCdsIp}:${effectiveCdsPort}). Check: 1) CDS is powered on, 2) Network/VPN connected, 3) IP and port are correct.`
+            : errMsg;
+        res.status(500).json({ ok: false, error: friendly, code: isTimeout ? "TIMEOUT" : "ERROR" });
     }
 });
 
@@ -460,8 +465,13 @@ app.post("/api/octt/check", async (req: Request, res: Response) => {
         setService("octt", "connected", `${result.configurations.length} configs`);
         res.json({ ok: true, configurations: result.configurations });
     } catch (error) {
-        setService("octt", "error", String(error));
-        res.status(500).json({ ok: false, error: String(error) });
+        const errMsg = error instanceof Error ? error.message : String(error);
+        const isTimeout = errMsg.includes("timeout") || errMsg.includes("ETIMEDOUT") || errMsg.includes("ECONNREFUSED");
+        const friendly = isTimeout
+            ? `CDS timeout (${effectiveCdsIp}:${effectiveCdsPort}). Check: 1) CDS is powered on, 2) Network/VPN connected, 3) IP and port are correct.`
+            : errMsg;
+        setService("cds", "error", friendly);
+        res.status(500).json({ ok: false, error: friendly, code: isTimeout ? "TIMEOUT" : "ERROR" });
     }
 });
 

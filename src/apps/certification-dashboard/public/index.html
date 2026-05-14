@@ -464,11 +464,46 @@ async function configureCds(){
 
 /**
  * Starts the Playwright test runner with the selected test cases.
+ * Performs a pre-flight check on CDS and OCTT before launching.
  * Clears previous logs and resets the results table.
  */
 async function runPlaywright(){
   const selected=getSelected();
   if(selected.length===0){addLog({timestamp:new Date().toISOString(),level:'warn',message:'No tests selected!',service:'ui'});return}
+
+  // ── Pre-flight checks ──
+  addLog({timestamp:new Date().toISOString(),level:'info',message:'Pre-flight: checking CDS...',service:'ui'});
+  try{
+    const cdsCheck=await fetch(API+'/api/cds/check',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip:$('inp-cds').value,port:parseInt($('inp-cds-port').value)})});
+    const cdsStatus=await cdsCheck.json();
+    if(!cdsStatus.ok){
+      addLog({timestamp:new Date().toISOString(),level:'error',message:'CDS unreachable: '+(cdsStatus.error||'timeout')+'. Check IP/port and network.',service:'ui'});
+      $('banner').classList.add('active','error');
+      $('banner-msg').textContent='CDS not reachable — check network/IP';
+      return;
+    }
+    addLog({timestamp:new Date().toISOString(),level:'success',message:'CDS OK: '+(cdsStatus.flags||[]).join(', '),service:'ui'});
+  }catch(e){
+    addLog({timestamp:new Date().toISOString(),level:'error',message:'CDS check failed: '+e.message+'. Is the server running?',service:'ui'});
+    return;
+  }
+
+  addLog({timestamp:new Date().toISOString(),level:'info',message:'Pre-flight: checking OCTT config...',service:'ui'});
+  try{
+    const octtCheck=await fetch(API+'/api/octt/check-config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({configurationName:$('inp-config').value})});
+    const octtStatus=await octtCheck.json();
+    if(!octtStatus.ok||!octtStatus.exists){
+      addLog({timestamp:new Date().toISOString(),level:'error',message:'OCTT config "'+$('inp-config').value+'" not found or unreachable.',service:'ui'});
+      $('banner').classList.add('active','error');
+      $('banner-msg').textContent='OCTT config missing — check settings';
+      return;
+    }
+    addLog({timestamp:new Date().toISOString(),level:'success',message:'OCTT OK: config exists ('+octtStatus.configurations.length+' total)',service:'ui'});
+  }catch(e){
+    addLog({timestamp:new Date().toISOString(),level:'error',message:'OCTT check failed: '+e.message,service:'ui'});
+    return;
+  }
+
   updBtns(true);
   $('banner').classList.add('active','running');
   $('banner-msg').textContent=`Running ${selected.length} tests...`;
