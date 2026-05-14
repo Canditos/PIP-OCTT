@@ -156,8 +156,8 @@ let sessionStarted = false;
 // Run tests sequentially — OCTT does not support parallel sessions
 test.describe.configure({ mode: 'serial' });
 
-// Global timeout: 10 minutes per test (reboot tests are slow)
-test.setTimeout(600_000);
+// Global timeout: 15 minutes per test (reboot tests can take 10+ minutes)
+test.setTimeout(900_000);
 
 // ══════════════════════════════════════════════════════════════
 // PHASE 0: Lab Setup
