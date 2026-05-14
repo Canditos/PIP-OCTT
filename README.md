@@ -172,6 +172,25 @@ The dashboard will be available at **http://localhost:3101**.
 - **Jira integration** — Upload failures directly as bugs with attachments
 - **Report viewer** — Inline CSV log inspection and ZIP downloads
 
+### CDS / Keysight Tools (14)
+
+| Tool | Description |
+|------|-------------|
+| `cds_connect` | Connect to CDS via TCP |
+| `cds_disconnect` | Disconnect from CDS |
+| `cds_get_status` | Read current CDS state |
+| `cds_read_pid` | Read a specific PID |
+| `cds_read_measurements` | Read DC voltage/current |
+| `cds_reset` | Reset CDS |
+| `cds_start` | Start EV simulation |
+| `cds_stop` | Stop EV simulation |
+| `cds_emergency_stop` | Emergency stop |
+| `cds_configure` | Configure CDS (spec, charge mode, sink) |
+| `cds_configure_ev` | Configure EV parameters (DC) |
+| `cds_configure_ev_ac` | Configure EV parameters (AC) |
+| `cds_wait_status` | Wait for a specific state |
+| `cds_write_pid` | Write a PID (with safety check) |
+
 ---
 
 ## Running Tests
