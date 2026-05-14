@@ -67,6 +67,12 @@ let sseIdCounter = 0;
 /** Active SSE clients keyed by their client ID */
 const sseClients = new Map<number, SseClient>();
 
+/** In-memory ring buffer of recent log entries (last 1000 lines).
+ *  This ensures logs are available via REST even when no Orchestrator is active
+ *  (e.g., during Playwright-only runs). */
+const logBuffer: Array<{ timestamp: string; level: string; message: string; service: string }> = [];
+const MAX_LOG_BUFFER = 1000;
+
 /**
  * Broadcasts an event to all connected SSE clients.
  * This is the primary mechanism for pushing real-time updates
@@ -99,6 +105,8 @@ function log(level: string, message: string, service?: string) {
     };
     console.log(`[${entry.timestamp}] [${entry.service}] ${message}`);
     broadcast("log", entry);
+    logBuffer.push(entry);
+    if (logBuffer.length > MAX_LOG_BUFFER) logBuffer.shift();
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -312,14 +320,12 @@ app.get("/api/results", (_req: Request, res: Response) => {
 
 /**
  * GET /api/logs
- * Returns the orchestrator's internal event log (if a pipeline has run).
+ * Returns the dashboard's in-memory log buffer.
+ * This captures logs from both Orchestrator-based pipelines and
+ * Playwright-based test runs, ensuring logs are always available.
  */
 app.get("/api/logs", (_req: Request, res: Response) => {
-    if (orchestrator) {
-        res.json(orchestrator.getLog());
-    } else {
-        res.json([]);
-    }
+    res.json(logBuffer);
 });
 
 // ══════════════════════════════════════════════════════════════
@@ -934,11 +940,27 @@ app.post("/api/pipeline/run-playwright", async (req: Request, res: Response) => 
             updatedConfig.long_operation_timeout = REBOOT_TIMEOUTS.longOperationTimeout;
             updatedConfig.max_time_deviation = REBOOT_TIMEOUTS.maxTimeDeviation;
             await octt.saveConfiguration(configName, updatedConfig);
+
+            // Verify the config was actually saved (defensive check)
+            const verify = await octt.getConfiguration(configName);
+            const verifiedMax = verify.data.config.max_timeout_period;
+            const verifiedLong = verify.data.config.long_operation_timeout;
+            if (verifiedMax !== REBOOT_TIMEOUTS.maxTimeoutPeriod && verifiedMax !== Number(REBOOT_TIMEOUTS.maxTimeoutPeriod)) {
+                throw new Error(`Config verification failed: max_timeout_period is ${verifiedMax} (expected ${REBOOT_TIMEOUTS.maxTimeoutPeriod})`);
+            }
+            if (verifiedLong !== REBOOT_TIMEOUTS.longOperationTimeout && verifiedLong !== Number(REBOOT_TIMEOUTS.longOperationTimeout)) {
+                throw new Error(`Config verification failed: long_operation_timeout is ${verifiedLong} (expected ${REBOOT_TIMEOUTS.longOperationTimeout})`);
+            }
+
             rebootTimeoutsApplied = true;
-            log("info", "Reboot timeouts applied", "playwright");
-            broadcast("pipeline", { state: "starting", message: "Reboot timeouts applied" });
+            log("info", `Reboot timeouts applied and verified: max=${verifiedMax}, long=${verifiedLong}`, "playwright");
+            broadcast("pipeline", { state: "starting", message: `Reboot timeouts applied (max=${verifiedMax}, long=${verifiedLong})` });
         } catch (error) {
-            log("warn", `Failed to apply reboot timeouts: ${error}. Continuing...`, "playwright");
+            const errMsg = error instanceof Error ? error.message : String(error);
+            log("error", `CRITICAL: Failed to apply reboot timeouts for ${configName}: ${errMsg}. Aborting test run.`, "playwright");
+            broadcast("pipeline", { state: "error", message: `Failed to apply reboot timeouts: ${errMsg}` });
+            playwrightRunning = false;
+            return res.status(500).json({ ok: false, error: `Failed to apply reboot timeouts: ${errMsg}` });
         }
     }
 
@@ -1091,10 +1113,15 @@ app.post("/api/pipeline/run-playwright", async (req: Request, res: Response) => 
                 updatedConfig.long_operation_timeout = DEFAULT_TIMEOUTS.longOperationTimeout;
                 updatedConfig.max_time_deviation = DEFAULT_TIMEOUTS.maxTimeDeviation;
                 await octt.saveConfiguration(configName, updatedConfig);
-                log("info", "Default timeouts restored", "playwright");
+
+                // Verify restoration
+                const verify = await octt.getConfiguration(configName);
+                log("info", `Default timeouts restored and verified: max=${verify.data.config.max_timeout_period}, long=${verify.data.config.long_operation_timeout}`, "playwright");
                 broadcast("pipeline", { state: "cleaning", message: "Default timeouts restored" });
             } catch (error) {
-                log("warn", `Failed to restore default timeouts: ${error}`, "playwright");
+                const errMsg = error instanceof Error ? error.message : String(error);
+                log("error", `Failed to restore default timeouts for ${configName}: ${errMsg}`, "playwright");
+                broadcast("pipeline", { state: "error", message: `Failed to restore default timeouts: ${errMsg}` });
             }
         }
 
