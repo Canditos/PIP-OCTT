@@ -463,31 +463,55 @@ async function configureCds(){
 // ══════════════════════════════════════════════════════════════
 
 /**
+ * Determines whether a test case requires the CDS (EV simulator).
+ * Charging, reservation, and connector-related tests need physical
+ * state changes (plugin, charging, unplug) that only the CDS can provide.
+ * Pure protocol tests (DataTransfer, Security, Firmware, etc.) do not.
+ *
+ * @param testId - Test case identifier (e.g. "TC_062_CS")
+ * @returns true if the CDS is required for this test
+ */
+function needsCds(testId){
+  const chargingTests=/^TC_(003|004|005|007|010|011|012|017|018|026|027|028|030|031|036|037|038|039|046|047|048|049|050|051|052|053|056|057|058|059|060|066|067|068|069|070|071|072|082)_/;
+  return chargingTests.test(testId);
+}
+
+/**
  * Starts the Playwright test runner with the selected test cases.
- * Performs a pre-flight check on CDS and OCTT before launching.
+ * Performs a pre-flight check on CDS (only if needed) and OCTT.
  * Clears previous logs and resets the results table.
  */
 async function runPlaywright(){
   const selected=getSelected();
   if(selected.length===0){addLog({timestamp:new Date().toISOString(),level:'warn',message:'No tests selected!',service:'ui'});return}
 
-  // ── Pre-flight checks ──
-  addLog({timestamp:new Date().toISOString(),level:'info',message:'Pre-flight: checking CDS...',service:'ui'});
-  try{
-    const cdsCheck=await fetch(API+'/api/cds/check',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip:$('inp-cds').value,port:parseInt($('inp-cds-port').value)})});
-    const cdsStatus=await cdsCheck.json();
-    if(!cdsStatus.ok){
-      addLog({timestamp:new Date().toISOString(),level:'error',message:'CDS unreachable: '+(cdsStatus.error||'timeout')+'. Check IP/port and network.',service:'ui'});
-      $('banner').classList.add('active','error');
-      $('banner-msg').textContent='CDS not reachable — check network/IP';
+  // Determine if any selected test requires CDS
+  const cdsRequired=selected.some(needsCds);
+  const cdsOnlyCount=selected.filter(needsCds).length;
+  const noCdsCount=selected.length-cdsOnlyCount;
+
+  // ── Pre-flight: CDS (only if needed) ──
+  if(cdsRequired){
+    addLog({timestamp:new Date().toISOString(),level:'info',message:`Pre-flight: checking CDS (${cdsOnlyCount} tests need it)...`,service:'ui'});
+    try{
+      const cdsCheck=await fetch(API+'/api/cds/check',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip:$('inp-cds').value,port:parseInt($('inp-cds-port').value)})});
+      const cdsStatus=await cdsCheck.json();
+      if(!cdsStatus.ok){
+        addLog({timestamp:new Date().toISOString(),level:'error',message:'CDS unreachable: '+(cdsStatus.error||'timeout')+'. Check IP/port and network.',service:'ui'});
+        $('banner').classList.add('active','error');
+        $('banner-msg').textContent='CDS not reachable — check network/IP';
+        return;
+      }
+      addLog({timestamp:new Date().toISOString(),level:'success',message:'CDS OK: '+(cdsStatus.flags||[]).join(', '),service:'ui'});
+    }catch(e){
+      addLog({timestamp:new Date().toISOString(),level:'error',message:'CDS check failed: '+e.message+'. Is the server running?',service:'ui'});
       return;
     }
-    addLog({timestamp:new Date().toISOString(),level:'success',message:'CDS OK: '+(cdsStatus.flags||[]).join(', '),service:'ui'});
-  }catch(e){
-    addLog({timestamp:new Date().toISOString(),level:'error',message:'CDS check failed: '+e.message+'. Is the server running?',service:'ui'});
-    return;
+  }else{
+    addLog({timestamp:new Date().toISOString(),level:'info',message:`Pre-flight: skipping CDS check (${noCdsCount}/${selected.length} tests do not need CDS)`,service:'ui'});
   }
 
+  // ── Pre-flight: OCTT (always required) ──
   addLog({timestamp:new Date().toISOString(),level:'info',message:'Pre-flight: checking OCTT config...',service:'ui'});
   try{
     const octtCheck=await fetch(API+'/api/octt/check-config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({configurationName:$('inp-config').value})});
