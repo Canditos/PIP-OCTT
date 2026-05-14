@@ -1081,14 +1081,21 @@ app.post("/api/pipeline/run-playwright", async (req: Request, res: Response) => 
         const skipCount = results.filter((r) => r.verdict === "skip").length;
         const total = results.length;
 
-        // Always attempt to stop the OCTT session when Playwright finishes
-        log("info", "Stopping OCTT session...", "playwright");
+        // Always attempt to stop the OCTT session when Playwright finishes.
+        // Playwright's own tear-down may have already stopped it, so we
+        // silently ignore "No session active" errors.
+        log("info", "Stopping OCTT session (if still active)...", "playwright");
         try {
             const octt = new OcttClient(effectiveOcttConfig);
             await octt.stopSession();
             log("info", "OCTT session stopped", "playwright");
         } catch (error) {
-            log("warn", `OCTT stop session failed: ${error}`, "playwright");
+            const msg = error instanceof Error ? error.message : String(error);
+            if (msg.includes("No session active") || msg.includes("400")) {
+                log("info", "OCTT session was already stopped by Playwright", "playwright");
+            } else {
+                log("warn", `OCTT stop session failed: ${msg}`, "playwright");
+            }
         }
 
         // ── Step 6: Restore default timeouts if reboot timeouts were applied ──
