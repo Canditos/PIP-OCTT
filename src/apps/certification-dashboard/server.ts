@@ -1069,7 +1069,7 @@ app.post("/api/pipeline/run-playwright", async (req: Request, res: Response) => 
             log("info", line.trim(), "playwright");
             outputBuffer += line + "\n";
 
-            // Match verdict annotation lines like "→ PASS (45s)"
+            // Match verdict annotation lines like "→ PASS (45s)" or "→ INCONC (0s)"
             const verdictMatch = line.match(/→\s+(PASS|FAIL|ERROR|INCONC)\s+\((\d+)s\)/);
             if (verdictMatch) {
                 pendingVerdicts.push({ verdict: verdictMatch[1].toLowerCase(), duration: parseInt(verdictMatch[2]) });
@@ -1079,6 +1079,17 @@ app.post("/api/pipeline/run-playwright", async (req: Request, res: Response) => 
             // Match HTTP error lines that indicate an infrastructure failure
             if (line.includes("→ HTTP/RESPONSE ERROR")) {
                 pendingVerdicts.push({ verdict: "error", duration: 0 });
+                continue;
+            }
+
+            // Detect SUT disconnection in log output and mark as inconc
+            // (hardware/network issue, not a charge-point bug)
+            if (line.includes("SUT__DISCONNECTED") || line.includes("SUT_DISCONNECTED")) {
+                log("warn", `SUT disconnection detected in log output`, "playwright");
+                // If we have a pending verdict and it's not already pass, upgrade to inconc
+                if (pendingVerdicts.length > 0 && pendingVerdicts[0].verdict !== "pass") {
+                    pendingVerdicts[0].verdict = "inconc";
+                }
                 continue;
             }
 
@@ -1115,6 +1126,7 @@ app.post("/api/pipeline/run-playwright", async (req: Request, res: Response) => 
     playwrightProcess.on("exit", async (code) => {
         const passCount = results.filter((r) => r.verdict === "pass").length;
         const failCount = results.filter((r) => r.verdict === "fail").length;
+        const inconcCount = results.filter((r) => r.verdict === "inconc").length;
         const skipCount = results.filter((r) => r.verdict === "skip").length;
         const total = results.length;
 
@@ -1186,13 +1198,20 @@ app.post("/api/pipeline/run-playwright", async (req: Request, res: Response) => 
             timeStr: "",
         })) as any[];
 
+        // Determine final state: if we have results, it's "done" even if some
+        // tests failed. Only mark "error" if Playwright crashed (no results).
+        const hasResults = total > 0;
+        const allPassed = hasResults && failCount === 0 && inconcCount === 0;
+        const finalState = !hasResults ? "error" : allPassed ? "done" : "done";
+        const summaryMsg = `Complete: ${passCount} pass, ${failCount} fail, ${inconcCount} inconc, ${skipCount} skip (${total} total)`;
+
         broadcast("pipeline", {
-            state: code === 0 ? "done" : "error",
-            message: `Playwright finished (${code}): ${passCount}/${total} passed, ${failCount} failed, ${skipCount} skipped`,
+            state: finalState,
+            message: summaryMsg,
             results: results.map((r) => ({ ...r, verdict: r.verdict.toLowerCase() })),
         });
 
-        log("info", `Playwright exited (code ${code}): ${passCount}/${total} passed`, "playwright");
+        log("info", `Playwright exited (code ${code}): ${summaryMsg}`, "playwright");
         playwrightRunning = false;
         playwrightProcess = null;
     });

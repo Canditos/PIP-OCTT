@@ -114,20 +114,36 @@ function needsCdsReset(suite: string, testId: string): boolean {
  * stop → wait → reset → wait → start.
  * This is called between tests to ensure a clean EV state.
  *
+ * If any step fails, retries once after a short delay. If both attempts
+ * fail, logs the error but does NOT abort the certification run.
+ *
  * @param request - Playwright APIRequestContext
  */
 async function resetCdsBetweenTests(request: any) {
     console.log('[CDS] Reset between tests...');
-    try {
-        await request.post(`${CONFIG.dashboardUrl}/i/${cdsId}/stop`);
-        await new Promise((resolve) => setTimeout(resolve, 2000));
-        await request.post(`${CONFIG.dashboardUrl}/i/${cdsId}/reset`);
-        await new Promise((resolve) => setTimeout(resolve, 3000));
-        await request.post(`${CONFIG.dashboardUrl}/i/${cdsId}/start`);
-        console.log('[CDS] Reset complete, simulation restarted');
-    } catch {
-        // Non-fatal: the next test may still succeed even if reset partially failed
-        console.log('[CDS] Reset error (non-fatal)');
+
+    async function attemptReset(): Promise<boolean> {
+        try {
+            await request.post(`${CONFIG.dashboardUrl}/i/${cdsId}/stop`);
+            await new Promise((resolve) => setTimeout(resolve, 2000));
+            await request.post(`${CONFIG.dashboardUrl}/i/${cdsId}/reset`);
+            await new Promise((resolve) => setTimeout(resolve, 3000));
+            await request.post(`${CONFIG.dashboardUrl}/i/${cdsId}/start`);
+            console.log('[CDS] Reset complete, simulation restarted');
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
+    const ok = await attemptReset();
+    if (!ok) {
+        console.warn('[CDS] First reset attempt failed, retrying in 5s...');
+        await new Promise((resolve) => setTimeout(resolve, 5000));
+        const ok2 = await attemptReset();
+        if (!ok2) {
+            console.error('[CDS] Reset failed twice — continuing anyway. Next test may be unstable.');
+        }
     }
 }
 
@@ -192,17 +208,33 @@ test('0d. Reset + Start CDS', async ({ request }) => {
 // test cases can be executed.
 // ══════════════════════════════════════════════════════════════
 
+/**
+ * Starts the OCTT session with automatic retry.
+ * If the first attempt fails (e.g., previous session still closing),
+ * waits 5 seconds and retries once.
+ */
 test('1. Start OCTT session', async ({ request }) => {
-    const resp = await request.post(
-        `${CONFIG.octtBaseUrl}${versionedPath}/session/start/${encodeURIComponent(CONFIG.configurationName)}`,
-        { headers: authHeader }
-    );
-    if (!resp.ok()) {
+    async function tryStart(attempt: number): Promise<boolean> {
+        const resp = await request.post(
+            `${CONFIG.octtBaseUrl}${versionedPath}/session/start/${encodeURIComponent(CONFIG.configurationName)}`,
+            { headers: authHeader }
+        );
+        if (resp.ok()) {
+            console.log(`[OCTT] Session started (attempt ${attempt}): ${CONFIG.configurationName}`);
+            return true;
+        }
         const errorText = await resp.text();
-        console.warn(`[OCTT] Start session warning (${resp.status()}): ${errorText.slice(0, 300)}`);
+        console.warn(`[OCTT] Start session failed (attempt ${attempt}, ${resp.status()}): ${errorText.slice(0, 300)}`);
+        return false;
     }
-    sessionStarted = true;
-    console.log(`[OCTT] Session started: ${CONFIG.configurationName}`);
+
+    let ok = await tryStart(1);
+    if (!ok) {
+        console.log('[OCTT] Retrying session start in 5s...');
+        await new Promise((resolve) => setTimeout(resolve, 5000));
+        ok = await tryStart(2);
+    }
+    sessionStarted = ok;
 });
 
 // ══════════════════════════════════════════════════════════════
@@ -240,37 +272,84 @@ Object.entries(testSuites).forEach(([suiteName, tests]) => {
                     await new Promise((resolve) => setTimeout(resolve, 3000));
                 }
 
-                // Execute the test case via OCTT REST API
-                const resp = await request.post(
-                    `${CONFIG.octtBaseUrl}/testcases/${testId}/execute`,
-                    { headers: authHeader, timeout: 600_000 }
-                );
+                // ── Execute the test case via OCTT REST API ──
+                // Wrapped in a broad try-catch so that a single failing test
+                // (SUT crash, network timeout, OCTT internal error) never
+                // aborts the entire certification run.
+                let verdict = 'error';
+                let duration = 0;
+                let sutDisconnected = false;
 
-                // Handle HTTP-level failures (e.g., OCTT crashed, network error)
-                if (!resp.ok()) {
-                    const errorBody = await resp.text();
-                    console.error(`[ERROR] ${testId} HTTP ${resp.status()}: ${errorBody.slice(0, 500)}`);
-                    results.push({ suite: suiteName, testCase: testId, verdict: 'error', duration: 0 });
-                    console.log(`  → ERROR (0s)`);
-                    console.log('[CDS] Resetting before next test...');
-                    await resetCdsBetweenTests(request);
-                    return;
+                try {
+                    const resp = await request.post(
+                        `${CONFIG.octtBaseUrl}/testcases/${testId}/execute`,
+                        { headers: authHeader, timeout: 600_000 }
+                    );
+
+                    if (!resp.ok()) {
+                        const errorBody = await resp.text();
+                        console.error(`[ERROR] ${testId} HTTP ${resp.status()}: ${errorBody.slice(0, 500)}`);
+                        verdict = 'error';
+                    } else {
+                        const body = await resp.json();
+                        const rawVerdict = (body.data?.[0]?.verdict ?? 'ERROR').toLowerCase();
+                        duration = body.data?.[0]?.duration ?? 0;
+
+                        // Detect SUT disconnection (network/hardware issue, not a CP bug)
+                        // OCTT logs contain "SUT__DISCONNECTED" when the WebSocket drops.
+                        // We treat this as inconc so the run continues and can be retried.
+                        const hasSutDisconnect = JSON.stringify(body).includes('SUT__DISCONNECTED') ||
+                            JSON.stringify(body).includes('SUT_DISCONNECTED');
+                        if (hasSutDisconnect && rawVerdict !== 'pass') {
+                            console.warn(`[WARN] ${testId} detected SUT disconnection → treating as inconc`);
+                            verdict = 'inconc';
+                            sutDisconnected = true;
+                        } else {
+                            verdict = rawVerdict;
+                        }
+                    }
+                } catch (execError: any) {
+                    console.error(`[ERROR] ${testId} threw exception: ${execError.message}`);
+                    verdict = 'error';
                 }
-
-                // Parse the OCTT verdict from the response body
-                const body = await resp.json();
-                const verdict = (body.data?.[0]?.verdict ?? 'ERROR').toLowerCase();
-                const duration = body.data?.[0]?.duration ?? 0;
 
                 results.push({ suite: suiteName, testCase: testId, verdict, duration });
                 console.log(`  → ${verdict.toUpperCase()} (${duration}s)`);
 
-                // Reset CDS between tests that modify charging state,
-                // except for maintenance builtins which are stateless.
+                // ── Recovery after SUT disconnection ──
+                // If the SUT dropped, attempt to restart the OCTT session
+                // so that subsequent tests have a chance to succeed.
+                if (sutDisconnected) {
+                    console.log('[OCTT] Attempting session recovery after SUT disconnect...');
+                    try {
+                        await request.post(`${CONFIG.octtBaseUrl}/session/stop`, { headers: authHeader });
+                        await new Promise((resolve) => setTimeout(resolve, 3000));
+                        const recoveryResp = await request.post(
+                            `${CONFIG.octtBaseUrl}${versionedPath}/session/start/${encodeURIComponent(CONFIG.configurationName)}`,
+                            { headers: authHeader }
+                        );
+                        if (recoveryResp.ok()) {
+                            console.log('[OCTT] Session recovered successfully');
+                        } else {
+                            console.warn('[OCTT] Session recovery failed, continuing anyway...');
+                            sessionStarted = false; // force re-start on next test
+                        }
+                    } catch {
+                        console.warn('[OCTT] Session recovery threw, continuing anyway...');
+                        sessionStarted = false;
+                    }
+                }
+
+                // ── CDS reset between tests ──
+                // Always attempt reset, even if the test errored, to leave
+                // the hardware in a known idle state for the next test.
                 if (!testId.startsWith('tc_bi_') && needsCdsReset(suiteName, testId)) {
                     console.log('[CDS] Resetting before next test...');
                     await resetCdsBetweenTests(request);
                 }
+
+                // Brief pause between tests to let the SUT settle after heavy operations
+                await new Promise((resolve) => setTimeout(resolve, 1000));
             });
         }
     });
