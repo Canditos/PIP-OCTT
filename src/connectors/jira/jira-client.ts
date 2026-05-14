@@ -293,4 +293,90 @@ export class JiraClient {
             },
         });
     }
+
+    // ── Custom Fields ──
+
+    /**
+     * Lists all custom fields available in the Jira instance.
+     * Filters to show only fields that are relevant (SUT, Firmware, etc.)
+     */
+    async getCustomFields(): Promise<Array<{ id: string; name: string; schema: unknown }>> {
+        const response = await this.axios.get("/field");
+        return response.data
+            .filter((f: any) => f.custom)
+            .map((f: any) => ({ id: f.id, name: f.name, schema: f.schema }));
+    }
+
+    /**
+     * Gets all unique values for a custom field by searching issues.
+     * Useful for populating dropdowns with existing SUTs or firmware versions.
+     *
+     * @param fieldName - Human-readable field name (e.g., "SUT")
+     * @returns Array of unique string values
+     */
+    async getCustomFieldValues(fieldName: string): Promise<string[]> {
+        const jql = `project = "${this.projectKey}" AND "${fieldName}" IS NOT EMPTY ORDER BY created DESC`;
+        const result = await this.search(jql, ["customfield_"], 100);
+        
+        const values = new Set<string>();
+        for (const issue of result.issues) {
+            for (const [key, value] of Object.entries(issue.fields)) {
+                if (key.startsWith("customfield_") && value) {
+                    if (typeof value === "string") {
+                        values.add(value);
+                    } else if (typeof value === "object" && value !== null) {
+                        // Handle select/multi-select fields
+                        if (Array.isArray(value)) {
+                            value.forEach((v: any) => {
+                                if (typeof v === "string") values.add(v);
+                                else if (v?.value) values.add(v.value);
+                                else if (v?.name) values.add(v.name);
+                            });
+                        } else {
+                            if ((value as any).value) values.add((value as any).value);
+                            else if ((value as any).name) values.add((value as any).name);
+                        }
+                    }
+                }
+            }
+        }
+        return Array.from(values).sort();
+    }
+
+    /**
+     * Searches for existing Test Execution issues to extract metadata.
+     * Returns unique SUTs and firmware versions from previous executions.
+     */
+    async getExecutionMetadata(): Promise<{ suts: string[]; firmwares: string[]; testPlans: string[] }> {
+        const jql = `project = "${this.projectKey}" AND labels = "test-execution" ORDER BY created DESC`;
+        const result = await this.search(jql, ["summary", "description", "labels"], 50);
+        
+        const suts = new Set<string>();
+        const firmwares = new Set<string>();
+        const testPlans = new Set<string>();
+
+        for (const issue of result.issues) {
+            // Extract SUT and firmware from summary: "[OCPP 1.6] Test Execution — SUT | FW version | pass%"
+            const summary = issue.fields.summary as string || "";
+            const match = summary.match(/—\s*(.+?)\s*\|\s*FW\s*(.+?)\s*\|/);
+            if (match) {
+                suts.add(match[1].trim());
+                firmwares.add(match[2].trim());
+            }
+            
+            // Extract test plan from description
+            const desc = issue.fields.description as any;
+            if (desc && typeof desc === "object") {
+                const text = JSON.stringify(desc);
+                const planMatch = text.match(/Test Plan[\s|:]+([^|]+)/);
+                if (planMatch) testPlans.add(planMatch[1].trim());
+            }
+        }
+
+        return {
+            suts: Array.from(suts).sort(),
+            firmwares: Array.from(firmwares).sort(),
+            testPlans: Array.from(testPlans).sort(),
+        };
+    }
 }

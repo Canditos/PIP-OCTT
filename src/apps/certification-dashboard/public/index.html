@@ -302,20 +302,34 @@
      MODAL: Jira Upload (Auto-shows after pipeline completion)
      Prompts for SUT details and uploads the full test execution
      results to Jira as a Task with attached JSON report.
+     
+     SUT and Firmware dropdowns are populated from Jira custom fields
+     to ensure consistency with existing project data.
      ══════════════════════════════════════════════════════════════ -->
 <div class="modal-bg" id="jira-upload-modal-bg" style="z-index:102">
 <div class="modal" style="width:min(600px,95vw)">
   <div class="modal-head"><span>&#128227; Upload Results to Jira</span><span id="jira-upload-status" style="color:var(--text-dim)">Ready</span></div>
   <div class="modal-body" style="padding:16px;display:flex;flex-direction:column;gap:10px">
-    <div style="font-size:10px;color:var(--text-dim);margin-bottom:4px">Fill in the test execution details below. All test results will be uploaded as a Jira issue with an attached JSON report.</div>
+    <div style="font-size:10px;color:var(--text-dim);margin-bottom:4px">Select the test execution details below. Values are fetched from Jira custom fields. All test results will be uploaded as a Jira issue with an attached JSON report.</div>
     <label class="f">SUT (System Under Test) *</label>
-    <input type="text" id="inp-jira-sut" placeholder="e.g. Siemens SICHARGE D 22kW">
+    <select id="sel-jira-sut" style="width:100%">
+      <option value="">Loading SUTs from Jira...</option>
+    </select>
     <label class="f">Firmware Version *</label>
-    <input type="text" id="inp-jira-fw" placeholder="e.g. v2.4.1">
+    <select id="sel-jira-fw" style="width:100%">
+      <option value="">Loading firmware versions...</option>
+    </select>
     <label class="f">Test Plan</label>
-    <input type="text" id="inp-jira-plan" placeholder="e.g. OCPP 1.6 Certification Q2">
+    <select id="sel-jira-plan" style="width:100%">
+      <option value="">Loading test plans...</option>
+    </select>
     <label class="f">Environment</label>
-    <input type="text" id="inp-jira-env" placeholder="e.g. Lab / Production">
+    <select id="sel-jira-env" style="width:100%">
+      <option value="Lab" selected>Lab</option>
+      <option value="Production">Production</option>
+      <option value="Staging">Staging</option>
+    </select>
+    <div id="jira-upload-error" style="font-size:9px;color:var(--danger);display:none;margin-top:4px"></div>
     <div id="jira-upload-summary" style="font-size:9px;color:var(--text-dim);font-family:var(--font);margin-top:4px;padding:8px;background:var(--bg);border-radius:4px;border:1px solid var(--border)">
       Waiting for test results...
     </div>
@@ -1112,20 +1126,26 @@ function drawChart(key,data){
 // ══════════════════════════════════════════════════════════════
 
 /**
- * Opens the Jira upload modal and pre-populates the summary.
+ * Opens the Jira upload modal, fetches metadata from Jira,
+ * and populates the dropdowns with SUTs, firmwares, and test plans.
  * @param results - Array of test results from the completed run
  */
-function openJiraUploadModal(results){
+async function openJiraUploadModal(results){
   const modal=$('jira-upload-modal-bg');
   modal.style.display='flex';
+  
+  // Show loading state
+  $('jira-upload-status').textContent='Loading Jira metadata...';
+  $('jira-upload-status').style.color='var(--warn)';
+  
+  // Calculate summary
   const passed=results.filter(r=>r.verdict==='pass').length;
   const failed=results.filter(r=>r.verdict==='fail').length;
   const inconc=results.filter(r=>r.verdict==='inconc').length;
   const errors=results.filter(r=>r.verdict==='error').length;
   const total=results.length;
   const passRate=total?Math.round(passed/total*100):0;
-  $('jira-upload-status').textContent=`${total} tests | ${passRate}% pass`;
-  $('jira-upload-status').style.color=passRate>=80?'var(--pass)':passRate>=50?'var(--warn)':'var(--danger)';
+  
   $('jira-upload-summary').innerHTML=[
     `<b>Execution Summary</b>`,
     `Total: ${total} | Pass: ${passed} | Fail: ${failed} | Inconc: ${inconc} | Error: ${errors}`,
@@ -1135,15 +1155,73 @@ function openJiraUploadModal(results){
     ...results.filter(r=>r.verdict!=='pass').map(r=>`  - ${r.testCase}: ${r.verdict} (${r.duration}s)`),
     ...(results.filter(r=>r.verdict!=='pass').length===0?['  All tests passed!']:[])
   ].join('<br>');
-  // Auto-populate from last used values (stored in localStorage)
-  const lastSut=localStorage.getItem('jira-last-sut')||'';
-  const lastFw=localStorage.getItem('jira-last-fw')||'';
-  const lastPlan=localStorage.getItem('jira-last-plan')||'';
-  const lastEnv=localStorage.getItem('jira-last-env')||'';
-  if(lastSut)$('inp-jira-sut').value=lastSut;
-  if(lastFw)$('inp-jira-fw').value=lastFw;
-  if(lastPlan)$('inp-jira-plan').value=lastPlan;
-  if(lastEnv)$('inp-jira-env').value=lastEnv;
+  
+  // Fetch metadata from Jira
+  try{
+    const r=await fetch(API+'/api/jira/metadata');
+    const j=await r.json();
+    if(j.ok&&j.metadata){
+      populateJiraSelect('sel-jira-sut',j.metadata.suts,'Select SUT...',true);
+      populateJiraSelect('sel-jira-fw',j.metadata.firmwares,'Select Firmware...',true);
+      populateJiraSelect('sel-jira-plan',j.metadata.testPlans,'Select Test Plan...',false);
+      $('jira-upload-status').textContent=`${total} tests | ${passRate}% pass`;
+      $('jira-upload-status').style.color=passRate>=80?'var(--pass)':passRate>=50?'var(--warn)':'var(--danger)';
+      $('jira-upload-error').style.display='none';
+    }else{
+      throw new Error(j.error||'Failed to load metadata');
+    }
+  }catch(e){
+    console.error('Failed to load Jira metadata:',e);
+    $('jira-upload-status').textContent='Jira metadata unavailable';
+    $('jira-upload-status').style.color='var(--danger)';
+    $('jira-upload-error').textContent='Warning: Could not load SUT/Firmware from Jira. You can still upload but values must match existing Jira fields exactly.';
+    $('jira-upload-error').style.display='block';
+    // Allow manual entry as fallback
+    populateJiraSelect('sel-jira-sut',[],'Enter SUT manually...',true);
+    populateJiraSelect('sel-jira-fw',[],'Enter Firmware manually...',true);
+    populateJiraSelect('sel-jira-plan',[],'Enter Test Plan manually...',false);
+  }
+}
+
+/**
+ * Populates a <select> element with options from Jira metadata.
+ * If no values exist, falls back to an editable text input.
+ */
+function populateJiraSelect(id,values,placeholder,required){
+  const sel=$(id);
+  sel.innerHTML='';
+  
+  // Default empty option
+  const emptyOpt=document.createElement('option');
+  emptyOpt.value='';
+  emptyOpt.textContent=required?placeholder+' *':placeholder;
+  if(required)emptyOpt.disabled=true;
+  sel.appendChild(emptyOpt);
+  
+  if(values&&values.length>0){
+    values.forEach(v=>{
+      const opt=document.createElement('option');
+      opt.value=v;
+      opt.textContent=v;
+      sel.appendChild(opt);
+    });
+    sel.disabled=false;
+  }else{
+    // Fallback: allow free text entry by swapping select for input
+    sel.innerHTML='<option value="">No values found in Jira</option>';
+    sel.disabled=true;
+    // Show a text input below as fallback
+    const fallbackId=id+'-fallback';
+    let fallback=$(fallbackId);
+    if(!fallback){
+      fallback=document.createElement('input');
+      fallback.id=fallbackId;
+      fallback.type='text';
+      fallback.placeholder=placeholder;
+      fallback.style='width:100%;margin-top:4px;';
+      sel.parentNode.insertBefore(fallback,sel.nextSibling);
+    }
+  }
 }
 
 /**
@@ -1158,21 +1236,25 @@ function closeJiraUploadModal(){
  * Creates a Task with full results table + attached JSON.
  */
 async function uploadExecutionToJira(){
-  const sut=$('inp-jira-sut').value.trim();
-  const fw=$('inp-jira-fw').value.trim();
-  const plan=$('inp-jira-plan').value.trim();
-  const env=$('inp-jira-env').value.trim();
+  // Get values from selects (or fallback inputs if Jira metadata was unavailable)
+  let sut=$('sel-jira-sut').value.trim();
+  let fw=$('sel-jira-fw').value.trim();
+  let plan=$('sel-jira-plan').value.trim();
+  let env=$('sel-jira-env').value.trim();
+  
+  // Fallback to text inputs if selects are empty/disabled
+  if(!sut){sut=($('sel-jira-sut-fallback')||{}).value||''}
+  if(!fw){fw=($('sel-jira-fw-fallback')||{}).value||''}
+  if(!plan){plan=($('sel-jira-plan-fallback')||{}).value||''}
 
-  if(!sut||!fw){
-    alert('SUT and Firmware Version are required');
+  // Validate required fields
+  const missing=[];
+  if(!sut)missing.push('SUT');
+  if(!fw)missing.push('Firmware Version');
+  if(missing.length>0){
+    alert('Required fields missing: '+missing.join(', '));
     return;
   }
-
-  // Save for next time
-  localStorage.setItem('jira-last-sut',sut);
-  localStorage.setItem('jira-last-fw',fw);
-  if(plan)localStorage.setItem('jira-last-plan',plan);
-  if(env)localStorage.setItem('jira-last-env',env);
 
   const btn=$('btn-jira-upload');
   btn.disabled=true;

@@ -1298,6 +1298,38 @@ app.post("/api/jira/check", async (_req: Request, res: Response) => {
     }
 });
 
+/**
+ * GET /api/jira/fields
+ * Lists all custom fields available in the Jira project.
+ * Used to discover SUT, Firmware, and other custom field IDs.
+ */
+app.get("/api/jira/fields", async (_req: Request, res: Response) => {
+    try {
+        const { JiraClient } = await import("../../connectors/jira/index.js");
+        const client = new JiraClient(effectiveJiraConfig);
+        const fields = await client.getCustomFields();
+        res.json({ ok: true, fields });
+    } catch (error) {
+        res.status(500).json({ ok: false, error: String(error) });
+    }
+});
+
+/**
+ * GET /api/jira/metadata
+ * Fetches SUTs, firmware versions, and test plans from previous
+ * test execution issues in Jira. Used to populate dropdowns.
+ */
+app.get("/api/jira/metadata", async (_req: Request, res: Response) => {
+    try {
+        const { JiraClient } = await import("../../connectors/jira/index.js");
+        const client = new JiraClient(effectiveJiraConfig);
+        const metadata = await client.getExecutionMetadata();
+        res.json({ ok: true, metadata });
+    } catch (error) {
+        res.status(500).json({ ok: false, error: String(error) });
+    }
+});
+
 // ══════════════════════════════════════════════════════════════
 // SECTION: REST API — Reports (Download + View + Upload)
 // ══════════════════════════════════════════════════════════════
