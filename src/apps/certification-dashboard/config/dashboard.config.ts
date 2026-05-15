@@ -1,0 +1,90 @@
+// ══════════════════════════════════════════════════════════════
+// Dashboard Configuration — Persistence & Validation
+// ══════════════════════════════════════════════════════════════
+
+import { existsSync, readFileSync, writeFileSync } from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const configPath = path.resolve(__dirname, "../../../../dashboard-config.json");
+
+/** Shape of the persisted dashboard configuration */
+export interface SavedConfig {
+    octtBaseUrl: string;
+    octtToken: string;
+    octtOcppVersion: string;
+    octtRole: string;
+    cdsIp: string;
+    cdsPort: number;
+    jiraBaseUrl: string;
+    jiraEmail: string;
+    jiraApiToken: string;
+    jiraProjectKey: string;
+}
+
+const defaultConfig: SavedConfig = {
+    octtBaseUrl: "",
+    octtToken: "",
+    octtOcppVersion: "ocpp1.6",
+    octtRole: "CS",
+    cdsIp: "192.168.100.10",
+    cdsPort: 51001,
+    jiraBaseUrl: "",
+    jiraEmail: "",
+    jiraApiToken: "",
+    jiraProjectKey: "CERT",
+};
+
+/** Load config from disk or return defaults */
+export function loadConfig(): SavedConfig {
+    try {
+        if (existsSync(configPath)) {
+            const raw = readFileSync(configPath, "utf-8");
+            return { ...defaultConfig, ...JSON.parse(raw) };
+        }
+    } catch { /* ignore */ }
+    return defaultConfig;
+}
+
+/** Save config to disk */
+export function saveConfig(cfg: SavedConfig): void {
+    try {
+        writeFileSync(configPath, JSON.stringify(cfg, null, 2), "utf-8");
+    } catch (e) {
+        console.error("[Config] Failed to save:", e);
+    }
+}
+
+/** Merge env vars with saved config (saved takes precedence) */
+export function buildEffectiveConfig(saved: SavedConfig) {
+    return {
+        octt: {
+            baseUrl: saved.octtBaseUrl || process.env.OCTT_BASE_URL || "",
+            token: saved.octtToken || process.env.OCTT_TOKEN || "",
+            ocppVersion: saved.octtOcppVersion || process.env.OCTT_OCPP_VERSION || "ocpp1.6",
+            role: (saved.octtRole || process.env.OCTT_ROLE || "CS") as "CS" | "CSMS",
+        },
+        cds: {
+            ip: saved.cdsIp || process.env.CDS_IP || "192.168.100.10",
+            port: saved.cdsPort || parseInt(process.env.CDS_PORT ?? "51001", 10),
+        },
+        jira: {
+            baseUrl: saved.jiraBaseUrl || process.env.JIRA_BASE_URL || "",
+            email: saved.jiraEmail || process.env.JIRA_EMAIL || "",
+            apiToken: saved.jiraApiToken || process.env.JIRA_API_TOKEN || "",
+            projectKey: saved.jiraProjectKey || process.env.JIRA_PROJECT_KEY || "CERT",
+        },
+    };
+}
+
+/** Current config instance (mutable, updated on save) */
+export let currentConfig = loadConfig();
+export let effectiveConfig = buildEffectiveConfig(currentConfig);
+
+/** Update config after save */
+export function updateConfig(newCfg: Partial<SavedConfig>): void {
+    currentConfig = { ...currentConfig, ...newCfg };
+    saveConfig(currentConfig);
+    effectiveConfig = buildEffectiveConfig(currentConfig);
+}
