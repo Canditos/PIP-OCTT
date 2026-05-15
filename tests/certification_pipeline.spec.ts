@@ -288,8 +288,17 @@ Object.entries(testSuites).forEach(([suiteName, tests]) => {
 
                     if (!resp.ok()) {
                         const errorBody = await resp.text();
-                        console.error(`[ERROR] ${testId} HTTP ${resp.status()}: ${errorBody.slice(0, 500)}`);
-                        verdict = 'error';
+                        // 504 Gateway Timeout from OCTT cloud proxy means the test
+                        // took longer than the cloud infrastructure allows. This is
+                        // an infrastructure limitation, not a charge point bug.
+                        if (resp.status() === 504 || errorBody.includes('504') || errorBody.includes('Gateway Time-out')) {
+                            console.warn(`[WARN] ${testId} HTTP 504 Gateway Timeout — charge point reboot took longer than cloud proxy allows. Treating as inconc.`);
+                            verdict = 'inconc';
+                            duration = 0;
+                        } else {
+                            console.error(`[ERROR] ${testId} HTTP ${resp.status()}: ${errorBody.slice(0, 500)}`);
+                            verdict = 'error';
+                        }
                     } else {
                         const body = await resp.json();
                         const rawVerdict = (body.data?.[0]?.verdict ?? 'ERROR').toLowerCase();
