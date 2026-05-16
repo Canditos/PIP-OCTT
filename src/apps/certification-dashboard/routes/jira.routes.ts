@@ -8,6 +8,8 @@ import { log } from "./logs.routes.js";
 import { setService } from "../services/service-state.service.js";
 import { effectiveConfig } from "../config/dashboard.config.js";
 import { getLastResults } from "../services/pipeline.service.js";
+import { validate } from "../middleware/validate.js";
+import { jiraUploadSchema } from "../schemas/api.schemas.js";
 
 const router = Router();
 const { jira: jiraCfg } = effectiveConfig;
@@ -34,11 +36,8 @@ router.get("/metadata", async (_req, res) => {
     }
 });
 
-router.post("/upload-execution", async (req, res) => {
+router.post("/upload-execution", validate(jiraUploadSchema), async (req, res) => {
     const { sut, firmwareVersion, testPlan, environment } = req.body;
-    if (!sut || !firmwareVersion) {
-        return res.status(400).json({ ok: false, error: "SUT and firmwareVersion are required" });
-    }
 
     try {
         const client = new JiraClient(jiraCfg);

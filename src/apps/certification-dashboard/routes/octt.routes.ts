@@ -7,11 +7,13 @@ import { OcttClient } from "../../../connectors/octt/index.js";
 import { log } from "./logs.routes.js";
 import { setService } from "../services/service-state.service.js";
 import { effectiveConfig } from "../config/dashboard.config.js";
+import { validate } from "../middleware/validate.js";
+import { octtCheckSchema, octtCheckConfigSchema, octtConfigTimeoutsSchema } from "../schemas/api.schemas.js";
 
 const router = Router();
 const { octt: octtCfg } = effectiveConfig;
 
-router.post("/check", async (req, res) => {
+router.post("/check", validate(octtCheckSchema), async (req, res) => {
     const { baseUrl, token } = req.body;
     setService("octt", "connecting");
     try {
@@ -26,7 +28,7 @@ router.post("/check", async (req, res) => {
     }
 });
 
-router.post("/check-config", async (req, res) => {
+router.post("/check-config", validate(octtCheckConfigSchema), async (req, res) => {
     const { configurationName } = req.body;
     try {
         const octt = new OcttClient(octtCfg);
@@ -38,7 +40,7 @@ router.post("/check-config", async (req, res) => {
     }
 });
 
-router.post("/config-timeouts", async (req, res) => {
+router.post("/config-timeouts", validate(octtConfigTimeoutsSchema), async (req, res) => {
     const { configurationName, maxTimeoutPeriod, longOperationTimeout } = req.body;
     try {
         const octt = new OcttClient(octtCfg);

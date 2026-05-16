@@ -5,6 +5,7 @@
 import { existsSync, readFileSync, writeFileSync } from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import { encryptConfig, decryptConfig } from "./crypto.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const configPath = path.resolve(__dirname, "../../../../dashboard-config.json");
@@ -36,21 +37,23 @@ const defaultConfig: SavedConfig = {
     jiraProjectKey: "CERT",
 };
 
-/** Load config from disk or return defaults */
+/** Load config from disk or return defaults. Decrypts sensitive fields. */
 export function loadConfig(): SavedConfig {
     try {
         if (existsSync(configPath)) {
             const raw = readFileSync(configPath, "utf-8");
-            return { ...defaultConfig, ...JSON.parse(raw) };
+            const parsed = JSON.parse(raw);
+            return decryptConfig({ ...defaultConfig, ...parsed }) as SavedConfig;
         }
     } catch { /* ignore */ }
     return defaultConfig;
 }
 
-/** Save config to disk */
+/** Save config to disk. Encrypts sensitive fields before writing. */
 export function saveConfig(cfg: SavedConfig): void {
     try {
-        writeFileSync(configPath, JSON.stringify(cfg, null, 2), "utf-8");
+        const encrypted = encryptConfig(cfg);
+        writeFileSync(configPath, JSON.stringify(encrypted, null, 2), "utf-8");
     } catch (e) {
         console.error("[Config] Failed to save:", e);
     }

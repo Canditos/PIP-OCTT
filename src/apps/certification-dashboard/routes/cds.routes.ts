@@ -7,11 +7,13 @@ import { CdsClient } from "../../../connectors/cds/index.js";
 import { log } from "./logs.routes.js";
 import { setService } from "../services/service-state.service.js";
 import { effectiveConfig } from "../config/dashboard.config.js";
+import { validate } from "../middleware/validate.js";
+import { cdsCheckSchema, cdsConfigureSchema } from "../schemas/api.schemas.js";
 
 const router = Router();
 const { cds: cdsCfg } = effectiveConfig;
 
-router.post("/check", async (req, res) => {
+router.post("/check", validate(cdsCheckSchema), async (req, res) => {
     const { ip, port } = req.body;
     const targetIp = ip || cdsCfg.ip;
     const targetPort = port || cdsCfg.port;
@@ -40,7 +42,7 @@ router.post("/check", async (req, res) => {
     }
 });
 
-router.post("/configure", async (req, res) => {
+router.post("/configure", validate(cdsConfigureSchema), async (req, res) => {
     const { ip, port, profile } = req.body;
     log("info", `Configuring CDS: ${profile || "default"}`, "cds");
     try {

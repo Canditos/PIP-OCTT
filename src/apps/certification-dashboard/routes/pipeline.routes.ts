@@ -5,10 +5,12 @@
 import { Router } from "express";
 import { runPlaywright, stopPlaywright, isPlaywrightRunning } from "../services/pipeline.service.js";
 import { log } from "./logs.routes.js";
+import { validate } from "../middleware/validate.js";
+import { pipelineRunSchema } from "../schemas/api.schemas.js";
 
 const router = Router();
 
-router.post("/run-playwright", async (req, res) => {
+router.post("/run-playwright", validate(pipelineRunSchema), async (req, res) => {
     const { testcaseNames, configurationName } = req.body || {};
     if (isPlaywrightRunning()) {
         return res.status(409).json({ ok: false, error: "Playwright already running" });
