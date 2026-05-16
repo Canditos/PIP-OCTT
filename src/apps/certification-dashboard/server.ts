@@ -18,6 +18,10 @@ import { effectiveConfig } from "./config/dashboard.config.js";
 import { addClient, removeClient } from "./services/sse.service.js";
 import { log } from "./routes/logs.routes.js";
 
+// Middleware
+import { errorHandler, notFoundHandler } from "./middleware/error-handler.js";
+import { rateLimiter } from "./middleware/rate-limiter.js";
+
 // Routes
 import statusRoutes from "./routes/status.routes.js";
 import logsRoutes from "./routes/logs.routes.js";
@@ -25,6 +29,7 @@ import cdsRoutes from "./routes/cds.routes.js";
 import octtRoutes from "./routes/octt.routes.js";
 import pipelineRoutes from "./routes/pipeline.routes.js";
 import jiraRoutes from "./routes/jira.routes.js";
+import docsRoutes from "./routes/docs.routes.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -33,6 +38,7 @@ const PORT = parseInt(process.env.CERT_DASHBOARD_PORT ?? "3101", 10);
 // ── Middleware ──
 app.use(cors());
 app.use(express.json());
+app.use(rateLimiter);
 
 // ── API Routes ──
 app.use("/api/status", statusRoutes);
@@ -41,6 +47,7 @@ app.use("/api/cds", cdsRoutes);
 app.use("/api/octt", octtRoutes);
 app.use("/api/pipeline", pipelineRoutes);
 app.use("/api/jira", jiraRoutes);
+app.use("/api/docs", docsRoutes);
 
 // ── SSE Endpoint ──
 app.get("/api/events", (req, res) => {
@@ -58,6 +65,10 @@ app.get("/api/events", (req, res) => {
 
 // ── Static Files ──
 app.use(express.static(path.join(__dirname, "public")));
+
+// ── Error Handling (must be last) ──
+app.use(notFoundHandler);
+app.use(errorHandler);
 
 // ── Start ──
 app.listen(PORT, () => {
