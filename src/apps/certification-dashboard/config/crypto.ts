@@ -2,9 +2,8 @@
 // Config Encryption — AES-256-GCM for sensitive fields
 // ══════════════════════════════════════════════════════════════
 //
-// Uses a machine-specific key derived from the hostname.
-// Not military-grade, but prevents casual credential theft
-// from reading dashboard-config.json directly.
+// Uses ENCRYPTION_KEY env var if set (same key = works across machines).
+// Falls back to machine-specific key from hostname.
 // ══════════════════════════════════════════════════════════════
 
 import crypto from "crypto";
@@ -14,12 +13,12 @@ const ALGORITHM = "aes-256-gcm";
 const SENSITIVE_FIELDS = ["octtToken", "jiraApiToken", "jiraEmail"] as const;
 
 /**
- * Derives a 32-byte key from the machine hostname.
- * Same machine always produces the same key.
+ * Derives a 32-byte key from ENCRYPTION_KEY env var (cross-machine portable),
+ * or falls back to machine hostname.
  */
 function deriveKey(): Buffer {
-    const salt = process.env.CONFIG_SALT || crypto.createHash("sha256").update(hostname() + "-ocpp-dashboard").digest("hex");
-    return crypto.scryptSync(salt, "ocpp-cert-v1", 32);
+    const material = process.env.ENCRYPTION_KEY || crypto.createHash("sha256").update(hostname() + "-ocpp-dashboard").digest("hex");
+    return crypto.scryptSync(material, "ocpp-cert-v1", 32);
 }
 
 /**

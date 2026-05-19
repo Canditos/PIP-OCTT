@@ -8,7 +8,9 @@ import { fileURLToPath } from "url";
 import { encryptConfig, decryptConfig } from "./crypto.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const configPath = path.resolve(__dirname, "../../../../dashboard-config.json");
+const configPath = process.env.DASHBOARD_CONFIG_PATH
+    ? path.resolve(process.env.DASHBOARD_CONFIG_PATH)
+    : path.resolve(__dirname, "../../../../dashboard-config.json");
 
 /** Shape of the persisted dashboard configuration */
 export interface SavedConfig {
