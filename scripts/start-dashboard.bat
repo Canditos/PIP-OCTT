@@ -1,5 +1,5 @@
 @echo off
 title OCPP Certification Dashboard
 cd /d "%~dp0"
-python launch-dashboard.py
+python scripts\start-dashboard.py
 pause

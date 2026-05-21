@@ -55,7 +55,7 @@ curl -X POST \
   -H "Content-Type: application/json" \
   -u your-email:your-api-token \
   "https://your-domain.atlassian.net/rest/raven/1.0/api/testexec" \
-  -d @test-execution/xray-execution.json
+  -d @scripts/output/test-execution/xray-execution.json
 ```
 
 ### Update Test Results

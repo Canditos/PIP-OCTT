@@ -91,7 +91,7 @@ Phase 3: Result Processing
 │   ├── jira-mapper.test.ts            # Unit tests for Jira mapping
 │   ├── execution-summarizer.test.ts   # Unit tests for summarizer
 │   └── severity-classifier.test.ts    # Unit tests for severity classifier
-├── sut-api-relay-agent/           # Python relay for OCTT SUT API forwarding
+├── src/apps/sut-api-relay/        # Python relay for OCTT SUT API forwarding
 ├── package.json
 ├── tsconfig.json
 ├── playwright.config.ts
@@ -300,7 +300,7 @@ The E2E test suite that runs outside the orchestrator:
 - **RxJS** is used in the CDS client for reactive status polling and timeout handling.
 - **Playwright** tests run in `serial` mode because OCTT does not support concurrent sessions.
 - **Timeouts**: Normal tests use 70s/450s OCTT timeouts. Reboot tests automatically switch to 600s/650s before execution and restore defaults afterward.
-- The **SUT API relay agent** (`sut-api-relay-agent/`) is a Python script that forwards OCTT SUT callbacks to the dashboard when direct network access is not possible.
+- The **SUT API relay agent** (`src/apps/sut-api-relay/`) is a Python script that forwards OCTT SUT callbacks to the dashboard when direct network access is not possible.
 
 ---
 

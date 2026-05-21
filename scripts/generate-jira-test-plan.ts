@@ -329,7 +329,7 @@ function generateJson(): object {
 
 // ── Main ──
 
-const outDir = resolve(process.cwd(), 'test-plans');
+const outDir = resolve(process.cwd(), 'scripts/output/test-plans');
 if (!existsSync(outDir)) mkdirSync(outDir, { recursive: true });
 
 // Generate files
@@ -356,7 +356,7 @@ console.log(`Protocol-only    : ${noCdsTests}`);
 console.log(`Reboot tests     : ${rebootCount}`);
 console.log(`Suites           : ${Object.keys(testSuites).length}`);
 console.log('\nFiles generated:');
-console.log(`  📄 test-plans/xray-import.csv    (Xray Test Management)`);
-console.log(`  📄 test-plans/jira-generic.csv   (Generic Jira import)`);
-console.log(`  📄 test-plans/test-plan.json     (JSON reference)`);
+console.log(`  scripts/output/test-plans/xray-import.csv    (Xray Test Management)`);
+console.log(`  scripts/output/test-plans/jira-generic.csv   (Generic Jira import)`);
+console.log(`  scripts/output/test-plans/test-plan.json     (JSON reference)`);
 console.log('\n══════════════════════════════════════════');

@@ -380,7 +380,7 @@ To automatically update Xray from the dashboard:
 
 // ── Main ──
 
-const outDir = resolve(process.cwd(), 'test-execution');
+const outDir = resolve(process.cwd(), 'scripts/output/test-execution');
 if (!existsSync(outDir)) mkdirSync(outDir, { recursive: true });
 
 const csv = generateExecutionCsv();
@@ -400,9 +400,9 @@ console.log(`Execution Name   : ${executionName}`);
 console.log(`Total Tests      : ${totalTests}`);
 console.log(`Initial Status   : TODO (all tests)`);
 console.log('\nFiles generated:');
-console.log(`  📄 test-execution/xray-execution.csv       (CSV import)`);
-console.log(`  📄 test-execution/xray-execution.json      (API payload)`);
-console.log(`  📄 test-execution/import-instructions.md   (How-to guide)`);
+console.log(`  scripts/output/test-execution/xray-execution.csv       (CSV import)`);
+console.log(`  scripts/output/test-execution/xray-execution.json      (API payload)`);
+console.log(`  scripts/output/test-execution/import-instructions.md   (How-to guide)`);
 console.log('\nNext Steps:');
 console.log('  1. Create a Test Execution issue in Jira/Xray');
 console.log('  2. Import xray-execution.csv to add all tests');
