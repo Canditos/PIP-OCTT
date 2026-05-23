@@ -2,7 +2,7 @@
 dist/
 .env
 dashboard-config.json
-*.log
+logs/
 reports/
 test-results/
 .DS_Store
