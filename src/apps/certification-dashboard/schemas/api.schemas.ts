@@ -52,10 +52,10 @@ export const configSaveSchema = z.object({
     octtToken: z.string().max(500).optional(),
     octtOcppVersion: z.enum(["ocpp1.6", "ocpp2.0.1"]).optional(),
     octtRole: z.enum(["CS", "CSMS"]).optional(),
-    cdsIp: z.string().ip({ version: "v4" }).optional(),
-    cdsPort: z.number().int().min(1).max(65535).optional(),
+    cdsIp: z.string().max(50).optional(),
+    cdsPort: z.union([z.string(), z.number()]).optional(),
     jiraBaseUrl: z.string().max(500).optional(),
-    jiraEmail: z.string().email().max(300).optional(),
+    jiraEmail: z.string().max(300).optional(),
     jiraApiToken: z.string().max(500).optional(),
     jiraProjectKey: z.string().max(50).optional(),
 }).strict();

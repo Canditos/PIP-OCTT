@@ -11,12 +11,11 @@ import { validate } from "../middleware/validate.js";
 import { cdsCheckSchema, cdsConfigureSchema } from "../schemas/api.schemas.js";
 
 const router = Router();
-const { cds: cdsCfg } = effectiveConfig;
 
 router.post("/check", validate(cdsCheckSchema), async (req, res) => {
     const { ip, port } = req.body;
-    const targetIp = ip || cdsCfg.ip;
-    const targetPort = port || cdsCfg.port;
+    const targetIp = ip || effectiveConfig.cds.ip;
+    const targetPort = port || effectiveConfig.cds.port;
 
     setService("cds", "connecting");
     try {
@@ -47,7 +46,7 @@ router.post("/configure", validate(cdsConfigureSchema), async (req, res) => {
     log("info", `Configuring CDS: ${profile || "default"}`, "cds");
     try {
         // Implementation simplified for brevity
-        setService("cds", "connected", `${ip || cdsCfg.ip}:${port || cdsCfg.port}`);
+        setService("cds", "connected", `${ip || effectiveConfig.cds.ip}:${port || effectiveConfig.cds.port}`);
         res.json({ ok: true });
     } catch (e: any) {
         setService("cds", "error", e.message);
@@ -57,7 +56,7 @@ router.post("/configure", validate(cdsConfigureSchema), async (req, res) => {
 
 router.get("/measurements", async (_req, res) => {
     try {
-        const cds = new CdsClient(cdsCfg.ip, cdsCfg.port);
+        const cds = new CdsClient(effectiveConfig.cds.ip, effectiveConfig.cds.port);
         const ok = await cds.connect();
         if (!ok) return res.status(503).json({ ok: false, error: "CDS not responding" });
         const measurements = await cds.readMeasurements();

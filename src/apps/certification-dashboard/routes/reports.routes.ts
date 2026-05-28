@@ -10,12 +10,10 @@ import { log } from "./logs.routes.js";
 const router = Router();
 
 router.post("/view-log", async (req, res) => {
-    const { testcaseName } = req.body;
+    const { testcaseName, configurationName } = req.body;
     try {
         const octt = new OcttClient(effectiveConfig.octt);
-        const configName = effectiveConfig.octt.baseUrl.includes("siemens")
-            ? "AUT_SID_SAT" : "AUT_SID_SAT";
-        const report = await octt.getReport(configName, testcaseName);
+        const report = await octt.getReport(configurationName || "AUT_SID_SAT", testcaseName);
         res.json({ ok: true, report });
     } catch (e: any) {
         log("warn", `View log failed: ${e.message}`, "reports");
@@ -24,12 +22,10 @@ router.post("/view-log", async (req, res) => {
 });
 
 router.post("/download", async (req, res) => {
-    const { testcaseName, format } = req.body;
+    const { testcaseName, format, configurationName } = req.body;
     try {
         const octt = new OcttClient(effectiveConfig.octt);
-        const configName = effectiveConfig.octt.baseUrl.includes("siemens")
-            ? "AUT_SID_SAT" : "AUT_SID_SAT";
-        const result = await octt.downloadReport(configName, testcaseName, format);
+        const result = await octt.downloadReport(configurationName || "AUT_SID_SAT", testcaseName, format);
         res.json({ ok: true, filename: result.filename, url: result.url });
     } catch (e: any) {
         log("warn", `Download failed: ${e.message}`, "reports");

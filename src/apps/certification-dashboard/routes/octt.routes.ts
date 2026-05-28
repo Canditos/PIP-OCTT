@@ -11,13 +11,12 @@ import { validate } from "../middleware/validate.js";
 import { octtCheckSchema, octtCheckConfigSchema, octtConfigTimeoutsSchema } from "../schemas/api.schemas.js";
 
 const router = Router();
-const { octt: octtCfg } = effectiveConfig;
 
 router.post("/check", validate(octtCheckSchema), async (req, res) => {
     const { baseUrl, token } = req.body;
     setService("octt", "connecting");
     try {
-        const cfg = { ...octtCfg, ...(baseUrl ? { baseUrl } : {}), ...(token ? { token } : {}) };
+        const cfg = { ...effectiveConfig.octt, ...(baseUrl ? { baseUrl } : {}), ...(token ? { token } : {}) };
         const octt = new OcttClient(cfg);
         const result = await octt.listConfigurations();
         setService("octt", "connected", `${result.configurations.length} configs`);
@@ -31,7 +30,7 @@ router.post("/check", validate(octtCheckSchema), async (req, res) => {
 router.post("/check-config", async (req, res) => {
     const { configurationName, baseUrl, token } = req.body;
     try {
-        const cfg = { ...octtCfg, ...(baseUrl ? { baseUrl } : {}), ...(token ? { token } : {}) };
+        const cfg = { ...effectiveConfig.octt, ...(baseUrl ? { baseUrl } : {}), ...(token ? { token } : {}) };
         const octt = new OcttClient(cfg);
         const configs = await octt.listConfigurations();
         const exists = configs.configurations.includes(configurationName);
@@ -44,7 +43,7 @@ router.post("/check-config", async (req, res) => {
 router.post("/config-timeouts", validate(octtConfigTimeoutsSchema), async (req, res) => {
     const { configurationName, maxTimeoutPeriod, longOperationTimeout } = req.body;
     try {
-        const octt = new OcttClient(octtCfg);
+        const octt = new OcttClient(effectiveConfig.octt);
         const current = await octt.getConfiguration(configurationName || "AUT_SID_SAT");
         const updated = { ...current.data.config };
         if (maxTimeoutPeriod !== undefined) updated.max_timeout_period = String(maxTimeoutPeriod);
@@ -60,7 +59,7 @@ router.post("/config-timeouts", validate(octtConfigTimeoutsSchema), async (req, 
 router.post("/prepare-reboot", async (req, res) => {
     const { configurationName } = req.body;
     try {
-        const octt = new OcttClient(octtCfg);
+        const octt = new OcttClient(effectiveConfig.octt);
         try { await octt.stopSession(); } catch { /* no session */ }
         await new Promise(r => setTimeout(r, 2000));
         const current = await octt.getConfiguration(configurationName || "AUT_SID_SAT");
@@ -77,7 +76,7 @@ router.post("/prepare-reboot", async (req, res) => {
 router.post("/restore-defaults", async (req, res) => {
     const { configurationName } = req.body;
     try {
-        const octt = new OcttClient(octtCfg);
+        const octt = new OcttClient(effectiveConfig.octt);
         const current = await octt.getConfiguration(configurationName || "AUT_SID_SAT");
         const updated = { ...current.data.config, max_timeout_period: "70", long_operation_timeout: "450" };
         await octt.saveConfiguration(configurationName || "AUT_SID_SAT", updated);

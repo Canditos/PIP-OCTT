@@ -12,14 +12,13 @@ import { validate } from "../middleware/validate.js";
 import { jiraUploadSchema } from "../schemas/api.schemas.js";
 
 const router = Router();
-const { jira: jiraCfg } = effectiveConfig;
 
 router.post("/check", async (_req, res) => {
     try {
-        const client = new JiraClient(jiraCfg);
-        await client.search(`project=${jiraCfg.projectKey}`, undefined, 1);
-        setService("jira", "connected", `Project: ${jiraCfg.projectKey}`);
-        res.json({ ok: true, projectKey: jiraCfg.projectKey });
+        const client = new JiraClient(effectiveConfig.jira);
+        await client.search(`project=${effectiveConfig.jira.projectKey}`, undefined, 1);
+        setService("jira", "connected", `Project: ${effectiveConfig.jira.projectKey}`);
+        res.json({ ok: true, projectKey: effectiveConfig.jira.projectKey });
     } catch (e: any) {
         setService("jira", "error", e.message);
         res.status(500).json({ ok: false, error: e.message });
@@ -28,7 +27,7 @@ router.post("/check", async (_req, res) => {
 
 router.get("/metadata", async (_req, res) => {
     try {
-        const client = new JiraClient(jiraCfg);
+        const client = new JiraClient(effectiveConfig.jira);
         const metadata = await client.getExecutionMetadata();
         res.json({ ok: true, metadata });
     } catch (e: any) {
@@ -40,7 +39,7 @@ router.post("/upload-execution", validate(jiraUploadSchema), async (req, res) =>
     const { sut, firmwareVersion, testPlan, environment } = req.body;
 
     try {
-        const client = new JiraClient(jiraCfg);
+        const client = new JiraClient(effectiveConfig.jira);
         const results = getLastResults();
         const passed = results.filter(r => r.verdict === "pass").length;
         const failed = results.filter(r => r.verdict === "fail").length;
@@ -69,7 +68,7 @@ router.post("/upload-execution", validate(jiraUploadSchema), async (req, res) =>
         });
 
         log("info", `Created Test Execution ${issue.key}`, "jira");
-        res.json({ ok: true, issueKey: issue.key, url: `${jiraCfg.baseUrl}/browse/${issue.key}` });
+        res.json({ ok: true, issueKey: issue.key, url: `${effectiveConfig.jira.baseUrl}/browse/${issue.key}` });
     } catch (e: any) {
         log("error", `Jira upload failed: ${e.message}`, "jira");
         res.status(500).json({ ok: false, error: e.message });
@@ -79,7 +78,7 @@ router.post("/upload-execution", validate(jiraUploadSchema), async (req, res) =>
 router.post("/upload", async (req, res) => {
     const { testcase, testplan, testexecution, ocppVersion, chargerNumber, comment } = req.body;
     try {
-        const client = new JiraClient(jiraCfg);
+        const client = new JiraClient(effectiveConfig.jira);
         const summary = `[OCPP ${ocppVersion || "1.6"}] ${testcase} — ${chargerNumber || "N/A"}`;
         const description = [
             `h2. Test Case: ${testcase}`,
