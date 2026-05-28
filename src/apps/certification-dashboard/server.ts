@@ -31,6 +31,7 @@ import pipelineRoutes from "./routes/pipeline.routes.js";
 import jiraRoutes from "./routes/jira.routes.js";
 import docsRoutes from "./routes/docs.routes.js";
 import relayRoutes from "./routes/relay.routes.js";
+import testcasesRoutes from "./routes/testcases.routes.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -50,6 +51,7 @@ app.use("/api/pipeline", pipelineRoutes);
 app.use("/api/jira", jiraRoutes);
 app.use("/api/docs", docsRoutes);
 app.use("/api/relay", relayRoutes);
+app.use("/api/testcases", testcasesRoutes);
 
 // ── SSE Endpoint ──
 app.get("/api/events", (req, res) => {
