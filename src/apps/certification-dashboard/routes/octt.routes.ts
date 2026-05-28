@@ -56,4 +56,36 @@ router.post("/config-timeouts", validate(octtConfigTimeoutsSchema), async (req, 
     }
 });
 
+router.post("/prepare-reboot", async (req, res) => {
+    const { configurationName } = req.body;
+    try {
+        const octt = new OcttClient(octtCfg);
+        try { await octt.stopSession(); } catch { /* no session */ }
+        await new Promise(r => setTimeout(r, 2000));
+        const current = await octt.getConfiguration(configurationName || "AUT_SID_SAT");
+        const updated = { ...current.data.config, max_timeout_period: "600", long_operation_timeout: "650" };
+        await octt.saveConfiguration(configurationName || "AUT_SID_SAT", updated);
+        log("info", `Reboot timeouts applied for ${configurationName || "AUT_SID_SAT"}`, "octt");
+        res.json({ ok: true, message: "Reboot timeouts applied (600/650)" });
+    } catch (e: any) {
+        log("error", `Prepare reboot failed: ${e.message}`, "octt");
+        res.status(500).json({ ok: false, error: e.message });
+    }
+});
+
+router.post("/restore-defaults", async (req, res) => {
+    const { configurationName } = req.body;
+    try {
+        const octt = new OcttClient(octtCfg);
+        const current = await octt.getConfiguration(configurationName || "AUT_SID_SAT");
+        const updated = { ...current.data.config, max_timeout_period: "70", long_operation_timeout: "450" };
+        await octt.saveConfiguration(configurationName || "AUT_SID_SAT", updated);
+        log("info", `Default timeouts restored for ${configurationName || "AUT_SID_SAT"}`, "octt");
+        res.json({ ok: true, message: "Default timeouts restored (70/450)" });
+    } catch (e: any) {
+        log("error", `Restore defaults failed: ${e.message}`, "octt");
+        res.status(500).json({ ok: false, error: e.message });
+    }
+});
+
 export default router;

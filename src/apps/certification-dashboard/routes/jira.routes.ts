@@ -76,4 +76,36 @@ router.post("/upload-execution", validate(jiraUploadSchema), async (req, res) =>
     }
 });
 
+router.post("/upload", async (req, res) => {
+    const { testcase, testplan, testexecution, ocppVersion, chargerNumber, comment } = req.body;
+    try {
+        const client = new JiraClient(jiraCfg);
+        const summary = `[OCPP ${ocppVersion || "1.6"}] ${testcase} — ${chargerNumber || "N/A"}`;
+        const description = [
+            `h2. Test Case: ${testcase}`,
+            `| *Test Plan* | ${testplan || "N/A"} |`,
+            `| *Test Execution* | ${testexecution || "N/A"} |`,
+            `| *OCPP Version* | ${ocppVersion || "1.6"} |`,
+            `| *Charger Number* | ${chargerNumber || "N/A"} |`,
+            ``,
+            `h3. Comment`,
+            comment || "No comment",
+        ].join("\n");
+
+        const issue = await client.createIssue({
+            summary,
+            description,
+            issueType: "Task",
+            priority: "Medium",
+            labels: ["ocpp", "certification", testcase],
+        });
+
+        log("info", `Created issue ${issue.key} for ${testcase}`, "jira");
+        res.json({ ok: true, issueKey: issue.key, message: `Created ${issue.key}` });
+    } catch (e: any) {
+        log("error", `Jira upload failed: ${e.message}`, "jira");
+        res.status(500).json({ ok: false, error: e.message });
+    }
+});
+
 export default router;
