@@ -6,19 +6,19 @@ import { z } from "zod";
 
 // ── CDS ──
 export const cdsCheckSchema = z.object({
-    ip: z.string().ip({ version: "v4" }).optional(),
-    port: z.number().int().min(1).max(65535).optional(),
+    ip: z.string().max(50).optional(),
+    port: z.union([z.string(), z.number()]).optional(),
 }).strict();
 
 export const cdsConfigureSchema = z.object({
-    ip: z.string().ip({ version: "v4" }).optional(),
-    port: z.number().int().min(1).max(65535).optional(),
+    ip: z.string().max(50).optional(),
+    port: z.union([z.string(), z.number()]).optional(),
     profile: z.string().max(200).optional(),
 }).strict();
 
 // ── OCTT ──
 export const octtCheckSchema = z.object({
-    baseUrl: z.string().url().optional(),
+    baseUrl: z.string().max(500).optional(),
     token: z.string().max(500).optional(),
 }).strict();
 

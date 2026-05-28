@@ -28,13 +28,14 @@ router.post("/check", validate(octtCheckSchema), async (req, res) => {
     }
 });
 
-router.post("/check-config", validate(octtCheckConfigSchema), async (req, res) => {
-    const { configurationName } = req.body;
+router.post("/check-config", async (req, res) => {
+    const { configurationName, baseUrl, token } = req.body;
     try {
-        const octt = new OcttClient(octtCfg);
+        const cfg = { ...octtCfg, ...(baseUrl ? { baseUrl } : {}), ...(token ? { token } : {}) };
+        const octt = new OcttClient(cfg);
         const configs = await octt.listConfigurations();
         const exists = configs.configurations.includes(configurationName);
-        res.json({ ok: true, exists, configurations: configs.configurations });
+        res.json({ ok: true, exists, configurations: configs.configurations, testcasesCount: configs.configurations.length, sessionStatus: "unknown" });
     } catch (e: any) {
         res.status(500).json({ ok: false, error: e.message });
     }

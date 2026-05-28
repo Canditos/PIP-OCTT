@@ -11,17 +11,7 @@ import { configSaveSchema } from "../schemas/api.schemas.js";
 const router = Router();
 
 router.get("/", (_req, res) => {
-    res.json({
-        ok: true,
-        config: currentConfig,
-        effective: {
-            octtUrl: effectiveConfig.octt.baseUrl,
-            octtToken: effectiveConfig.octt.token ? effectiveConfig.octt.token.slice(0, 8) + "..." : "",
-            cdsIp: effectiveConfig.cds.ip,
-            cdsPort: effectiveConfig.cds.port,
-            jiraProjectKey: effectiveConfig.jira.projectKey,
-        },
-    });
+    res.json(currentConfig);
 });
 
 router.post("/", validate(configSaveSchema), (req, res) => {
