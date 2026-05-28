@@ -222,18 +222,18 @@ Solução: Correr npm run dev:cert e ver output
 
 ---
 
-## Setup completo em 60 segundos (novo PC)
+## Setup completo em 10 segundos (novo PC)
 
 ```powershell
 git clone https://github.com/Canditos/PIP-OCTT.git
 cd PIP-OCTT
-npm install
-npx playwright install chromium
-copy dashboard-config.example.json dashboard-config.json
-# Agora edita dashboard-config.json com:
-#   - OCTT URL + token
-#   - CDS IP + port
-#   - Jira URL + email + token
-npm run dev:cert
-# Abre http://localhost:3101
+.\start.cmd        # ou .\start.ps1
 ```
+
+É só isto. O script faz **tudo automático:**
+1. Verifica se Node.js está instalado
+2. `npm install` se precisar
+3. Instala Playwright Chromium browser
+4. Cria `dashboard-config.json` a partir do template e abre para editares
+5. Arranca o servidor
+6. Abre o browser em `http://localhost:3101`
