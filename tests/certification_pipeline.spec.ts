@@ -77,22 +77,37 @@ const testSuites: Record<string, string[]> = {
         'tc_bi_restore_configuration', 'tc_bi_stop_transactions', 'tc_bi_clear_cache',
         'tc_bi_clear_local_auth_list', 'tc_bi_restore_availability', 'tc_bi_reset_hard',
     ],
-    'Authorization': ['TC_023_4_CS', 'TC_023_5_CS', 'TC_024_CS', 'TC_061_1_CS', 'TC_061_2_CS'],
-    'DataTransfer': ['TC_062_CS'],
-    'FirmwareManagement': ['TC_044_1_CS', 'TC_044_2_CS', 'TC_044_3_CS', 'TC_045_1_CS', 'TC_045_2_CS'],
-    'LocalAuthList': ['TC_008_1_CS', 'TC_008_2_CS', 'TC_042_1_CS', 'TC_042_2_CS', 'TC_043_1_CS', 'TC_043_2_CS', 'TC_043_3_CS', 'TC_043_CS'],
+    'ColdBoot': ['TC_001_CS', 'TC_002_CS'],
+    'StartSession': ['TC_003_CS', 'TC_004_1_CS', 'TC_004_2_CS'],
+    'StopSession': ['TC_005_1_CS', 'TC_005_2_CS', 'TC_005_3_CS', 'TC_068_CS', 'TC_069_CS'],
+    'Cache': ['TC_007_1_CS', 'TC_007_2_CS', 'TC_061_1_CS', 'TC_061_2_CS'],
+    'RemoteActions': ['TC_010_CS', 'TC_011_1_CS', 'TC_011_2_CS', 'TC_012_CS'],
+    'Resetting': ['TC_013_CS', 'TC_014_CS', 'TC_015_CS', 'TC_016_CS'],
+    'Unlocking': ['TC_017_1_CS', 'TC_017_2_CS', 'TC_018_1_CS', 'TC_018_2_CS'],
+    'Configuration': ['TC_019_CS', 'TC_021_CS'],
     'MeterValues': ['TC_070_CS', 'TC_071_CS'],
-    'Provisioning': ['TC_001_CS', 'TC_002_CS', 'TC_013_CS', 'TC_014_CS', 'TC_015_CS', 'TC_016_CS', 'TC_019_CS', 'TC_021_CS', 'TC_032_1_CS', 'TC_032_2_CS', 'TC_034_CS', 'TC_040_1_CS', 'TC_040_2_CS', 'TC_041_CS'],
-    'RemoteControl': ['TC_010_CS', 'TC_011_1_CS', 'TC_011_2_CS', 'TC_012_CS', 'TC_017_1_CS', 'TC_017_2_CS', 'TC_018_1_CS', 'TC_018_2_CS', 'TC_026_CS', 'TC_027_CS', 'TC_028_CS', 'TC_030_CS', 'TC_031_CS'],
-    'RemoteTrigger': ['TC_054_CS', 'TC_055_CS'],
+    'BasicActions': ['TC_023_4_CS', 'TC_023_5_CS', 'TC_024_CS'],
+    'RemoteActionsNonHappy': ['TC_026_CS', 'TC_027_CS', 'TC_028_CS'],
+    'UnlockingNonHappy': ['TC_030_CS', 'TC_031_CS'],
+    'PowerFailure': ['TC_032_1_CS', 'TC_032_2_CS', 'TC_034_CS'],
+    'OfflineBehavior': ['TC_036_CS', 'TC_037_1_CS', 'TC_037_2_CS', 'TC_037_3_CS', 'TC_038_CS', 'TC_039_CS'],
+    'ConfigKeysNonHappy': ['TC_040_1_CS', 'TC_040_2_CS'],
+    'FaultBehavior': ['TC_041_CS'],
+    'LocalAuthList': ['TC_008_1_CS', 'TC_008_2_CS', 'TC_042_1_CS', 'TC_042_2_CS', 'TC_043_CS', 'TC_043_1_CS', 'TC_043_2_CS', 'TC_043_3_CS'],
+    'FirmwareManagement': ['TC_044_1_CS', 'TC_044_2_CS', 'TC_044_3_CS'],
+    'Diagnostics': ['TC_045_1_CS', 'TC_045_2_CS'],
     'Reservation': ['TC_046_1_CS', 'TC_046_2_CS', 'TC_047_CS', 'TC_048_1_CS', 'TC_048_2_CS', 'TC_048_3_CS', 'TC_048_4_CS', 'TC_049_CS', 'TC_050_1_CS', 'TC_050_2_CS', 'TC_050_3_CS', 'TC_050_4_CS', 'TC_051_CS', 'TC_052_CS', 'TC_053_1_CS', 'TC_053_2_CS'],
-    'Security': ['TC_073_CS', 'TC_074_CS', 'TC_075_1_CS', 'TC_075_2_CS', 'TC_076_CS', 'TC_077_CS', 'TC_078_CS', 'TC_079_CS', 'TC_080_CS', 'TC_081_CS', 'TC_083_CS', 'TC_084_CS', 'TC_085_CS', 'TC_086_CS', 'TC_087_CS'],
+    'RemoteTrigger': ['TC_054_CS', 'TC_055_CS'],
     'SmartCharging': ['TC_056_CS', 'TC_057_CS', 'TC_058_1_CS', 'TC_058_2_CS', 'TC_059_CS', 'TC_060_CS', 'TC_066_CS', 'TC_067_CS', 'TC_072_CS', 'TC_082_CS'],
-    'Transactions': ['TC_003_CS', 'TC_004_1_CS', 'TC_004_2_CS', 'TC_005_1_CS', 'TC_005_2_CS', 'TC_005_3_CS', 'TC_007_1_CS', 'TC_007_2_CS', 'TC_036_CS', 'TC_037_1_CS', 'TC_037_2_CS', 'TC_037_3_CS', 'TC_038_CS', 'TC_039_CS', 'TC_068_CS', 'TC_069_CS'],
+    'DataTransfer': ['TC_062_CS'],
+    'Security': ['TC_073_CS', 'TC_074_CS', 'TC_075_1_CS', 'TC_075_2_CS', 'TC_076_CS', 'TC_077_CS', 'TC_078_CS', 'TC_079_CS', 'TC_080_CS', 'TC_081_CS', 'TC_083_CS', 'TC_084_CS', 'TC_085_CS', 'TC_086_CS', 'TC_087_CS'],
 };
 
+/** Tests that involve a charge point reboot and need extra recovery time */
+const REBOOT_TESTS = ['TC_001_CS', 'TC_002_CS', 'TC_013_CS', 'TC_014_CS', 'TC_015_CS', 'TC_016_CS', 'TC_032_1_CS', 'TC_032_2_CS', 'TC_034_CS'];
+
 /** Suites that involve physical charging state and need CDS reset between tests */
-const chargingSuites = ['Transactions', 'RemoteControl', 'SmartCharging', 'Reservation'];
+const chargingSuites = ['StartSession', 'StopSession', 'Cache', 'RemoteActions', 'Resetting', 'Unlocking', 'SmartCharging', 'Reservation', 'LocalAuthList', 'OfflineBehavior'];
 
 /**
  * Determines whether a CDS reset is required before/after a given test.
@@ -105,8 +120,6 @@ const chargingSuites = ['Transactions', 'RemoteControl', 'SmartCharging', 'Reser
  */
 function needsCdsReset(suite: string, testId: string): boolean {
     if (chargingSuites.includes(suite)) return true;
-    if (testId.startsWith('TC_017') || testId.startsWith('TC_018')) return true;
-    if (testId.startsWith('TC_008') || testId.startsWith('TC_007')) return true;
     return false;
 }
 
