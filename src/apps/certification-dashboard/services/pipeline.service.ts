@@ -56,9 +56,22 @@ export async function runPlaywright(testcaseNames: string[], configName: string)
     try {
         const octt = new OcttClient(effectiveConfig.octt);
         try { await octt.stopSession(); } catch { /* no session to stop */ }
-        await new Promise(r => setTimeout(r, 1000));
+        await new Promise(r => setTimeout(r, 2000));
         const result = await octt.startSession(configName);
         broadcastLog("info", `OCTT session started: ${JSON.stringify(result)}`, "playwright");
+
+        // Wait for SUT to reconnect (up to 30s)
+        for (let i = 0; i < 30; i++) {
+            await new Promise(r => setTimeout(r, 1000));
+            try {
+                const status = await octt.getSutStatus();
+                if (status.isConnected) {
+                    broadcastLog("info", "SUT connected", "playwright");
+                    break;
+                }
+                broadcastLog("info", `Waiting for SUT connection... (${i + 1}s)`, "playwright");
+            } catch { /* ignore */ }
+        }
     } catch (e: any) {
         broadcastLog("error", `OCTT session failed: ${e.message}. Continuing...`, "playwright");
     }
