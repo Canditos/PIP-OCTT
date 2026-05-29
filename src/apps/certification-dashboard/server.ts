@@ -54,6 +54,7 @@ app.use("/api/octt", octtRoutes);
 app.use("/api/pipeline", pipelineRoutes);
 app.use("/api/jira", jiraRoutes);
 app.use("/api/docs", docsRoutes);
+app.use("/api", relayRoutes);
 app.use("/api/relay", relayRoutes);
 app.use("/api/testcases", testcasesRoutes);
 app.use("/api/results", resultsRoutes);
