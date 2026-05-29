@@ -63,9 +63,9 @@ export async function runPlaywright(testcaseNames: string[], configName: string)
         broadcastLog("error", `OCTT session failed: ${e.message}. Continuing...`, "playwright");
     }
 
-    // Build Playwright command — use playwright.cmd directly (no shell, no escaping issues)
+    // Build Playwright command — use node directly with @playwright/test CLI (no .cmd, no shell)
     const projectRoot = path.resolve(__dirname, "../../..");
-    const playwrightBin = path.join(projectRoot, "node_modules", ".bin", "playwright.cmd");
+    const playwrightCli = path.join(projectRoot, "node_modules", "@playwright", "test", "cli.js");
     const args = ["test", "--reporter=list"];
     if (testcaseNames?.length > 0) {
         const grep = testcaseNames.map(t => `Execute ${t}`).join("|");
@@ -76,7 +76,7 @@ export async function runPlaywright(testcaseNames: string[], configName: string)
     lastResults = [];
     broadcast("pipeline", { state: "starting", message: `Running ${testcaseNames?.length || "all"} tests...` });
 
-    playwrightProcess = execFile(playwrightBin, args, {
+    playwrightProcess = execFile(process.execPath, [playwrightCli, ...args], {
         cwd: projectRoot,
         stdio: ["ignore", "pipe", "pipe"],
         env: {
