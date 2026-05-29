@@ -2,7 +2,7 @@
 // Pipeline Service — Playwright runner and result tracking
 // ══════════════════════════════════════════════════════════════
 
-import { spawn, execFile, type ChildProcess } from "child_process";
+import { spawn, type ChildProcess } from "child_process";
 import path from "path";
 import { fileURLToPath } from "url";
 import { OcttClient } from "../../../connectors/octt/index.js";
@@ -65,18 +65,21 @@ export async function runPlaywright(testcaseNames: string[], configName: string)
 
     // Build Playwright command
     const projectRoot = path.resolve(__dirname, "../../..");
-    const npxBin = path.join(projectRoot, "node_modules", ".bin", "npx.cmd");
     const args = ["playwright", "test", "--reporter=list"];
     if (testcaseNames?.length > 0) {
         const grep = testcaseNames.map(t => `Execute ${t}`).join("|");
         args.push(`--grep=${grep}`);
     }
 
+    // On Windows, shell:true interprets | as pipe. Escape it.
+    const command = args.join(" ");
+    const escapedCommand = command.replace(/\|/g, "^|");
+
     isRunning = true;
     lastResults = [];
     broadcast("pipeline", { state: "starting", message: `Running ${testcaseNames?.length || "all"} tests...` });
 
-    playwrightProcess = execFile(npxBin, args, {
+    playwrightProcess = spawn("cmd", ["/c", escapedCommand], {
         cwd: projectRoot,
         stdio: ["ignore", "pipe", "pipe"],
         env: {
