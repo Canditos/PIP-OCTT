@@ -151,7 +151,7 @@ async function resetCdsBetweenTests(request: any) {
 const results: { suite: string; testCase: string; verdict: string; duration: number }[] = [];
 
 /** Tracks whether the OCTT session has been started */
-let sessionStarted = false;
+let sessionStarted = process.env.OCTT_SESSION_STARTED === "true";
 
 // Run tests sequentially — OCTT does not support parallel sessions
 test.describe.configure({ mode: 'serial' });

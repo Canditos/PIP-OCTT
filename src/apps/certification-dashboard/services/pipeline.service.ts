@@ -84,6 +84,7 @@ export async function runPlaywright(testcaseNames: string[], configName: string)
             OCTT_BASE_URL: effectiveConfig.octt.baseUrl,
             OCTT_TOKEN: effectiveConfig.octt.token,
             OCTT_CONFIG: configName,
+            OCTT_SESSION_STARTED: "true",
             CDS_IP: effectiveConfig.cds.ip,
             CDS_PORT: String(effectiveConfig.cds.port),
         },
