@@ -25,13 +25,31 @@ export function getLastResults(): any[] {
 }
 
 const REBOOT_TESTS = ["TC_001_CS", "TC_002_CS", "TC_013_CS", "TC_014_CS", "TC_015_CS", "TC_016_CS", "TC_032_1_CS", "TC_032_2_CS", "TC_034_CS"];
+const REBOOT_TIMEOUTS = { max_timeout_period: "600", long_operation_timeout: "650", max_time_deviation: "4" };
+const DEFAULT_TIMEOUTS = { max_timeout_period: "70", long_operation_timeout: "450", max_time_deviation: "4" };
 
 export async function runPlaywright(testcaseNames: string[], configName: string): Promise<{ ok: boolean; error?: string }> {
     if (isRunning) return { ok: false, error: "Playwright already running" };
 
     const hasReboot = testcaseNames.some(t => REBOOT_TESTS.includes(t));
+    let rebootApplied = false;
+
+    // Apply reboot timeouts if needed
     if (hasReboot) {
-        broadcastLog("info", "Reboot tests detected - ensure maxTimeoutPeriod=600, longOperationTimeout=650 in OCTT config", "playwright");
+        broadcastLog("info", "Reboot tests detected - applying extended timeouts", "playwright");
+        broadcast("pipeline", { state: "starting", message: "Reboot tests detected - applying extended timeouts (600/650)..." });
+        try {
+            const octt = new OcttClient(effectiveConfig.octt);
+            try { await octt.stopSession(); } catch { /* no session */ }
+            await new Promise(r => setTimeout(r, 2000));
+            const current = await octt.getConfiguration(configName);
+            const updated = { ...current.data.config, ...REBOOT_TIMEOUTS };
+            await octt.saveConfiguration(configName, updated);
+            rebootApplied = true;
+            broadcastLog("info", "Reboot timeouts applied", "playwright");
+        } catch (e: any) {
+            broadcastLog("warn", `Failed to apply reboot timeouts: ${e.message}. Continuing...`, "playwright");
+        }
     }
 
     // Stop any existing session first, then start new one
@@ -120,6 +138,19 @@ export async function runPlaywright(testcaseNames: string[], configName: string)
             const octt = new OcttClient(effectiveConfig.octt);
             await octt.stopSession();
         } catch { /* ignore */ }
+
+        // Restore default timeouts
+        if (rebootApplied) {
+            try {
+                const octt = new OcttClient(effectiveConfig.octt);
+                const current = await octt.getConfiguration(configName);
+                const updated = { ...current.data.config, ...DEFAULT_TIMEOUTS };
+                await octt.saveConfiguration(configName, updated);
+                broadcastLog("info", "Default timeouts restored", "playwright");
+            } catch (e: any) {
+                broadcastLog("warn", `Failed to restore timeouts: ${e.message}`, "playwright");
+            }
+        }
 
         broadcast("pipeline", {
             state: total > 0 ? "done" : "error",
