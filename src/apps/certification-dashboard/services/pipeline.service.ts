@@ -65,8 +65,7 @@ export async function runPlaywright(testcaseNames: string[], configName: string)
 
     // Build Playwright command
     const projectRoot = path.resolve(__dirname, "../../..");
-    const specFile = path.join(projectRoot, "tests", "certification_pipeline.spec.ts");
-    const args = ["playwright", "test", specFile, "--reporter=list"];
+    const args = ["playwright", "test", "--reporter=list"];
     if (testcaseNames?.length > 0) {
         const grep = testcaseNames.map(t => `Execute ${t}`).join("|");
         args.push(`--grep=${grep}`);
