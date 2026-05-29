@@ -84,9 +84,56 @@ app.use(notFoundHandler);
 app.use(errorHandler);
 
 // ── Start ──
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
     console.log(`[Cert Dashboard] http://localhost:${PORT}`);
     log("info", `Dashboard started on port ${PORT}`, "dashboard");
+
+    // Auto-check services on startup
+    const { setService } = await import("./services/service-state.service.js");
+    const { OcttClient } = await import("../../connectors/octt/index.js");
+    const { CdsClient } = await import("../../connectors/cds/index.js");
+
+    // Check OCTT
+    if (effectiveConfig.octt.baseUrl && effectiveConfig.octt.token) {
+        try {
+            setService("octt", "connecting");
+            const client = new OcttClient(effectiveConfig.octt);
+            const result = await client.listConfigurations();
+            setService("octt", "connected", `${result.configurations.length} configs`);
+        } catch (e: any) {
+            setService("octt", "error", e.message?.slice(0, 60) || "Connection failed");
+        }
+    }
+
+    // Check CDS
+    try {
+        setService("cds", "connecting");
+        const cds = new CdsClient(effectiveConfig.cds.ip, effectiveConfig.cds.port);
+        const ok = await cds.connect();
+        if (ok) {
+            setService("cds", "connected", `${effectiveConfig.cds.ip}:${effectiveConfig.cds.port}`);
+            await cds.disconnect();
+        } else {
+            setService("cds", "error", "Connection failed");
+        }
+    } catch (e: any) {
+        setService("cds", "error", e.message?.slice(0, 60) || "Connection failed");
+    }
+
+    // Check Jira
+    if (effectiveConfig.jira.baseUrl && effectiveConfig.jira.apiToken) {
+        try {
+            setService("jira", "connecting");
+            const axios = (await import("axios")).default;
+            await axios.get(`${effectiveConfig.jira.baseUrl}/rest/api/3/project/${effectiveConfig.jira.projectKey}`, {
+                auth: { username: effectiveConfig.jira.email, password: effectiveConfig.jira.apiToken },
+                timeout: 5000,
+            });
+            setService("jira", "connected", effectiveConfig.jira.projectKey || "OK");
+        } catch (e: any) {
+            setService("jira", "error", e.message?.slice(0, 60) || "Connection failed");
+        }
+    }
 });
 
 // ── Graceful Shutdown ──

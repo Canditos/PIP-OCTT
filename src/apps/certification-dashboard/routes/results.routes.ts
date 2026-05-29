@@ -8,7 +8,8 @@ import { getLastResults } from "../services/pipeline.service.js";
 const router = Router();
 
 router.get("/", (_req, res) => {
-    res.json(getLastResults());
+    const results = getLastResults();
+    res.json({ results, total: results.length });
 });
 
 export default router;
