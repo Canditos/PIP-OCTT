@@ -2,7 +2,7 @@
 // Pipeline Service — Playwright runner and result tracking
 // ══════════════════════════════════════════════════════════════
 
-import { spawn, type ChildProcess } from "child_process";
+import { spawn, execFile, type ChildProcess } from "child_process";
 import path from "path";
 import { fileURLToPath } from "url";
 import { OcttClient } from "../../../connectors/octt/index.js";
@@ -65,6 +65,7 @@ export async function runPlaywright(testcaseNames: string[], configName: string)
 
     // Build Playwright command
     const projectRoot = path.resolve(__dirname, "../../..");
+    const npxBin = path.join(projectRoot, "node_modules", ".bin", "npx.cmd");
     const args = ["playwright", "test", "--reporter=list"];
     if (testcaseNames?.length > 0) {
         const grep = testcaseNames.map(t => `Execute ${t}`).join("|");
@@ -75,10 +76,9 @@ export async function runPlaywright(testcaseNames: string[], configName: string)
     lastResults = [];
     broadcast("pipeline", { state: "starting", message: `Running ${testcaseNames?.length || "all"} tests...` });
 
-    playwrightProcess = spawn("npx", args, {
+    playwrightProcess = execFile(npxBin, args, {
         cwd: projectRoot,
         stdio: ["ignore", "pipe", "pipe"],
-        shell: true,
         env: {
             ...process.env,
             OCTT_BASE_URL: effectiveConfig.octt.baseUrl,
