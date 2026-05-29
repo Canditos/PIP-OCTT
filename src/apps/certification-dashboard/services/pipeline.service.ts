@@ -43,8 +43,8 @@ export async function runPlaywright(testcaseNames: string[], configName: string)
             try { await octt.stopSession(); } catch { /* no session */ }
             await new Promise(r => setTimeout(r, 2000));
             const current = await octt.getConfiguration(configName);
-            const updated = { ...current.data.config, ...REBOOT_TIMEOUTS };
-            await octt.saveConfiguration(configName, updated);
+            const updated = { ...(current.data as any).Config, ...REBOOT_TIMEOUTS };
+            await octt.saveConfiguration(configName, { Config: updated });
             rebootApplied = true;
             broadcastLog("info", "Reboot timeouts applied", "playwright");
         } catch (e: any) {
@@ -144,8 +144,8 @@ export async function runPlaywright(testcaseNames: string[], configName: string)
             try {
                 const octt = new OcttClient(effectiveConfig.octt);
                 const current = await octt.getConfiguration(configName);
-                const updated = { ...current.data.config, ...DEFAULT_TIMEOUTS };
-                await octt.saveConfiguration(configName, updated);
+                const updated = { ...(current.data as any).Config, ...DEFAULT_TIMEOUTS };
+                await octt.saveConfiguration(configName, { Config: updated });
                 broadcastLog("info", "Default timeouts restored", "playwright");
             } catch (e: any) {
                 broadcastLog("warn", `Failed to restore timeouts: ${e.message}`, "playwright");

@@ -53,6 +53,7 @@ console.log('[PLAYWRIGHT ENV]', {
     OCTT_CONFIG: process.env.OCTT_CONFIG,
     CDS_IP: process.env.CDS_IP,
     configurationName: CONFIG.configurationName,
+    OCTT_SESSION_STARTED: process.env.OCTT_SESSION_STARTED,
 });
 
 /** Unique identifier for this CDS instance in the dashboard */
