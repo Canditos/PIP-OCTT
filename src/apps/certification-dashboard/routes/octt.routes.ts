@@ -32,9 +32,14 @@ router.post("/check-config", async (req, res) => {
     try {
         const cfg = { ...effectiveConfig.octt, ...(baseUrl ? { baseUrl } : {}), ...(token ? { token } : {}) };
         const octt = new OcttClient(cfg);
-        const configs = await octt.listConfigurations();
+        const [configs, sutStatus] = await Promise.all([
+            octt.listConfigurations(),
+            octt.getSutStatus().catch(() => null),
+        ]);
         const exists = configs.configurations.includes(configurationName);
-        res.json({ ok: true, exists, configurations: configs.configurations, testcasesCount: configs.configurations.length, sessionStatus: "unknown" });
+        const sessionStatus = sutStatus?.sessionStatus || "unknown";
+        const testcasesCount = configs.configurations.length;
+        res.json({ ok: true, exists, configurations: configs.configurations, testcasesCount, sessionStatus, isConnected: sutStatus?.isConnected || false });
     } catch (e: any) {
         res.status(500).json({ ok: false, error: e.message });
     }
