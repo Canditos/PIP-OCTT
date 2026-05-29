@@ -64,7 +64,7 @@ export async function runPlaywright(testcaseNames: string[], configName: string)
     }
 
     // Build Playwright command — use node directly with @playwright/test CLI (no .cmd, no shell)
-    const projectRoot = path.resolve(__dirname, "../../..");
+    const projectRoot = path.resolve(__dirname, "../../../..");
     const playwrightCli = path.join(projectRoot, "node_modules", "@playwright", "test", "cli.js");
     const args = ["test", "--reporter=list"];
     if (testcaseNames?.length > 0) {
