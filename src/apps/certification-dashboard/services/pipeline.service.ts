@@ -52,9 +52,11 @@ export async function runPlaywright(testcaseNames: string[], configName: string)
         }
     }
 
-    // Start OCTT session
+    // Stop any existing session first, then start new one
     try {
         const octt = new OcttClient(effectiveConfig.octt);
+        try { await octt.stopSession(); } catch { /* no session to stop */ }
+        await new Promise(r => setTimeout(r, 1000));
         const result = await octt.startSession(configName);
         broadcastLog("info", `OCTT session started: ${JSON.stringify(result)}`, "playwright");
     } catch (e: any) {
@@ -63,19 +65,18 @@ export async function runPlaywright(testcaseNames: string[], configName: string)
 
     // Build Playwright command
     const projectRoot = path.resolve(__dirname, "../../..");
-    const args = ["test", `"tests/certification_pipeline.spec.ts"`, "--reporter=list"];
+    const specFile = path.join(projectRoot, "tests", "certification_pipeline.spec.ts");
+    const args = ["playwright", "test", `"${specFile}"`, "--reporter=list"];
     if (testcaseNames?.length > 0) {
         const grep = testcaseNames.map(t => `Execute ${t}`).join("|");
         args.push(`"--grep=${grep}"`);
     }
 
-    const playwrightBin = path.join(projectRoot, "node_modules", ".bin", "playwright.cmd");
-
     isRunning = true;
     lastResults = [];
     broadcast("pipeline", { state: "starting", message: `Running ${testcaseNames?.length || "all"} tests...` });
 
-    playwrightProcess = spawn(playwrightBin, args, {
+    playwrightProcess = spawn("npx", args, {
         cwd: projectRoot,
         stdio: ["ignore", "pipe", "pipe"],
         shell: true,
