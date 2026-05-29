@@ -406,7 +406,10 @@ test.afterAll(async ({ request }) => {
     }
 
     // Stop the OCTT session to free the SUT connection
-    if (sessionStarted) {
+    // Skip when running via pipeline (OCTT_MANAGE_SESSION=true) —
+    // the pipeline's exit handler already manages session lifecycle.
+    // Stopping here can interrupt a test still running on the OCTT cloud.
+    if (sessionStarted && !process.env.OCTT_MANAGE_SESSION) {
         try {
             const resp = await request.post(
                 `${CONFIG.octtBaseUrl}/session/stop`,
