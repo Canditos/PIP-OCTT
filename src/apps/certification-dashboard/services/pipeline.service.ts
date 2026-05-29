@@ -2,7 +2,7 @@
 // Pipeline Service — Playwright runner and result tracking
 // ══════════════════════════════════════════════════════════════
 
-import { spawn, type ChildProcess } from "child_process";
+import { execFile, type ChildProcess } from "child_process";
 import path from "path";
 import { fileURLToPath } from "url";
 import { OcttClient } from "../../../connectors/octt/index.js";
@@ -63,23 +63,20 @@ export async function runPlaywright(testcaseNames: string[], configName: string)
         broadcastLog("error", `OCTT session failed: ${e.message}. Continuing...`, "playwright");
     }
 
-    // Build Playwright command
+    // Build Playwright command — use playwright.cmd directly (no shell, no escaping issues)
     const projectRoot = path.resolve(__dirname, "../../..");
-    const args = ["playwright", "test", "--reporter=list"];
+    const playwrightBin = path.join(projectRoot, "node_modules", ".bin", "playwright.cmd");
+    const args = ["test", "--reporter=list"];
     if (testcaseNames?.length > 0) {
         const grep = testcaseNames.map(t => `Execute ${t}`).join("|");
         args.push(`--grep=${grep}`);
     }
 
-    // On Windows, shell:true interprets | as pipe. Escape it.
-    const command = args.join(" ");
-    const escapedCommand = command.replace(/\|/g, "^|");
-
     isRunning = true;
     lastResults = [];
     broadcast("pipeline", { state: "starting", message: `Running ${testcaseNames?.length || "all"} tests...` });
 
-    playwrightProcess = spawn("cmd", ["/c", escapedCommand], {
+    playwrightProcess = execFile(playwrightBin, args, {
         cwd: projectRoot,
         stdio: ["ignore", "pipe", "pipe"],
         env: {
