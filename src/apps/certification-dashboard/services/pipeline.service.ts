@@ -43,7 +43,7 @@ export async function runPlaywright(testcaseNames: string[], configName: string)
             try { await octt.stopSession(); } catch { /* no session */ }
             await new Promise(r => setTimeout(r, 2000));
             const current = await octt.getConfiguration(configName);
-            const updated = { ...current.data.Config, ...REBOOT_TIMEOUTS };
+            const updated = { ...current.data.config, ...REBOOT_TIMEOUTS };
             await octt.saveConfiguration(configName, updated);
             rebootApplied = true;
             broadcastLog("info", "Reboot timeouts applied", "playwright");
@@ -79,7 +79,7 @@ export async function runPlaywright(testcaseNames: string[], configName: string)
     // Build Playwright command — use node directly with @playwright/test CLI (no .cmd, no shell)
     const projectRoot = path.resolve(__dirname, "../../../..");
     const playwrightCli = path.join(projectRoot, "node_modules", "@playwright", "test", "cli.js");
-    const args = ["test", "--reporter=list"];
+    const args = ["test", "--reporter=list", "--workers=1"];
     if (testcaseNames?.length > 0) {
         const grep = testcaseNames.map(t => `Execute ${t}`).join("|");
         args.push(`--grep=${grep}`);
@@ -105,32 +105,43 @@ export async function runPlaywright(testcaseNames: string[], configName: string)
     } as any);
 
     // Parse stdout
-    const pendingVerdicts: { verdict: string; duration: number }[] = [];
+    const verdictsMap = new Map<string, { verdict: string; duration: number }>();
 
     playwrightProcess.stdout?.on("data", (data: Buffer) => {
         const lines = data.toString().split("\n").filter(l => l.trim());
         for (const line of lines) {
             broadcastLog("info", line.trim(), "playwright");
 
-            const verdictMatch = line.match(/→\s+(PASS|FAIL|ERROR|INCONC)\s+\((\d+)s\)/);
+            const verdictMatch = line.match(/→\s+(\S+):\s+(PASS|FAIL|ERROR|INCONC)\s+\((\d+)s\)/);
             if (verdictMatch) {
-                pendingVerdicts.push({ verdict: verdictMatch[1].toLowerCase(), duration: parseInt(verdictMatch[2]) });
+                const tcId = verdictMatch[1];
+                const verdict = verdictMatch[2].toLowerCase();
+                const duration = parseInt(verdictMatch[3]);
+                verdictsMap.set(tcId, { verdict, duration });
                 continue;
             }
 
-            const passMatch = line.match(/ok\s+\d+.*›.*Execute\s+(\S+)/);
+            const passMatch = line.match(/(?:ok|✓|✔)\s+\d+.*›.*Execute\s+(\S+)/);
             const failMatch = line.match(/(?:x|✘|✗|not ok)\s+\d+.*›.*Execute\s+(\S+)/);
 
             if (passMatch || failMatch) {
                 const tc = (passMatch || failMatch)![1];
                 let verdict = failMatch ? "fail" : "pass";
                 let duration = 0;
-                if (pendingVerdicts.length > 0) {
-                    const pending = pendingVerdicts.shift()!;
-                    verdict = pending.verdict;
-                    duration = pending.duration;
+                if (verdictsMap.has(tc)) {
+                    const info = verdictsMap.get(tc)!;
+                    verdict = info.verdict;
+                    duration = info.duration;
                 }
-                lastResults.push({ testCase: tc, verdict, duration });
+                
+                // Deduplicate/update results in place
+                const existingIdx = lastResults.findIndex(r => r.testCase === tc);
+                if (existingIdx !== -1) {
+                    lastResults[existingIdx] = { testCase: tc, verdict, duration };
+                } else {
+                    lastResults.push({ testCase: tc, verdict, duration });
+                }
+                
                 broadcast("pipeline", { state: "testing", message: `${verdict.toUpperCase()}: ${tc}`, results: [...lastResults] });
             }
         }
@@ -158,7 +169,7 @@ export async function runPlaywright(testcaseNames: string[], configName: string)
             try {
                 const octt = new OcttClient(effectiveConfig.octt);
                 const current = await octt.getConfiguration(configName);
-                const updated = { ...current.data.Config, ...DEFAULT_TIMEOUTS };
+                const updated = { ...current.data.config, ...DEFAULT_TIMEOUTS };
                 await octt.saveConfiguration(configName, updated);
                 broadcastLog("info", "Default timeouts restored", "playwright");
             } catch (e: any) {

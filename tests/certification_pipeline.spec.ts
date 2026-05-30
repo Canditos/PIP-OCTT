@@ -337,7 +337,7 @@ Object.entries(testSuites).forEach(([suiteName, tests]) => {
                 }
 
                 results.push({ suite: suiteName, testCase: testId, verdict, duration });
-                console.log(`  → ${verdict.toUpperCase()} (${duration}s)`);
+                console.log(`  → ${testId}: ${verdict.toUpperCase()} (${duration}s)`);
 
                 // ── Recovery after SUT disconnection ──
                 // If the SUT dropped, attempt to restart the OCTT session

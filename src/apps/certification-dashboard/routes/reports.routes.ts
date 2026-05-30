@@ -17,10 +17,11 @@ const router = Router();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 /**
- * Extracts the first .log file content from a ZIP buffer.
+ * Extracts a specific target .log file content from a ZIP buffer.
  */
-function unzipFirstLogFile(zipBuffer: Buffer): Promise<string> {
+function unzipTargetLogFile(zipBuffer: Buffer, targetFileName: string): Promise<string> {
     return new Promise((resolve, reject) => {
+        const targetLower = targetFileName.toLowerCase();
         yauzl.fromBuffer(zipBuffer, { lazyEntries: true }, (err, zipfile) => {
             if (err) return reject(err);
             if (!zipfile) return reject(new Error("Could not read ZIP file"));
@@ -28,7 +29,8 @@ function unzipFirstLogFile(zipBuffer: Buffer): Promise<string> {
             zipfile.readEntry();
             zipfile.on("entry", (entry) => {
                 const entryName = entry.fileName;
-                if (entryName.toLowerCase().endsWith(".log")) {
+                const entryBaseName = path.basename(entryName).toLowerCase();
+                if (entryBaseName === targetLower) {
                     found = true;
                     zipfile.openReadStream(entry, (err, readStream) => {
                         if (err) return reject(err);
@@ -45,7 +47,7 @@ function unzipFirstLogFile(zipBuffer: Buffer): Promise<string> {
                 }
             });
             zipfile.on("end", () => {
-                if (!found) reject(new Error("No .log file found in ZIP archive"));
+                if (!found) reject(new Error(`Target log file ${targetFileName} not found in ZIP archive`));
             });
             zipfile.on("error", reject);
         });
@@ -56,7 +58,10 @@ router.post("/view-log", async (req, res) => {
     const { testcaseName, configurationName } = req.body;
     try {
         const octt = new OcttClient(effectiveConfig.octt);
-        const reports = await octt.getReports({ testcase_name: testcaseName, configuration_name: configurationName || "AUT_SID_SAT" });
+        const reports = await octt.getReportsFiltered({
+            testcase_name: [testcaseName],
+            configuration_name: [configurationName || "AUT_SID_SAT"]
+        });
         if (!reports.data || reports.data.length === 0) {
             res.status(404).json({ ok: false, error: `No reports found for ${testcaseName}` });
             return;
@@ -73,7 +78,7 @@ router.post("/view-log", async (req, res) => {
         });
 
         // Unzip and extract the detailed .log file content
-        const logContent = await unzipFirstLogFile(zipContent);
+        const logContent = await unzipTargetLogFile(zipContent, logfileName);
 
         res.json({ ok: true, content: logContent });
     } catch (e: any) {
@@ -86,7 +91,10 @@ router.post("/download", async (req, res) => {
     const { testcaseName, format, configurationName } = req.body;
     try {
         const octt = new OcttClient(effectiveConfig.octt);
-        const reports = await octt.getReports({ testcase_name: testcaseName, configuration_name: configurationName || "AUT_SID_SAT" });
+        const reports = await octt.getReportsFiltered({
+            testcase_name: [testcaseName],
+            configuration_name: [configurationName || "AUT_SID_SAT"]
+        });
         if (!reports.data || reports.data.length === 0) {
             res.status(404).json({ ok: false, error: `No reports found for ${testcaseName}` });
             return;
@@ -103,7 +111,7 @@ router.post("/download", async (req, res) => {
         });
 
         // Unzip and extract the detailed .log file content
-        const logContent = await unzipFirstLogFile(zipContent);
+        const logContent = await unzipTargetLogFile(zipContent, logfileName);
 
         // Save as a .log file in the reports directory so the user gets the actual log
         const filename = `${testcaseName}_Log_${Date.now()}.log`;

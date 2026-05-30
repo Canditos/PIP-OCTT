@@ -31,7 +31,7 @@ export interface GetConfigurationsResponse {
 
 export interface GetConfigurationResponse {
     data: {
-        Config: Record<string, unknown>;
+        config: Record<string, unknown>;
     };
     fileName: string;
     octtCertificationMode: boolean | string;
