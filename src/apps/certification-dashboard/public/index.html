@@ -1119,6 +1119,7 @@ async function init(){
     const r=await fetch(API+'/api/config');
     const j=await r.json();
     if(j.octtBaseUrl)$('inp-octt-url').value=j.octtBaseUrl;
+    if(j.octtToken)$('inp-octt-token').value=j.octtToken;
     if(j.cdsIp)$('inp-cds').value=j.cdsIp;
     if(j.cdsPort)$('inp-cds-port').value=j.cdsPort;
     if(j.octtOcppVersion)$('sel-ver').value=j.octtOcppVersion;
@@ -1172,9 +1173,10 @@ async function saveConfig(){
     if(j.ok){
       addLog({timestamp:new Date().toISOString(),level:'success',message:'Config saved to dashboard-config.json',service:'ui'});
       el.style.color='var(--pass)';
-      el.textContent='Saved! Relay restarting...';
+      el.textContent='Saved! Checking services...';
       setTimeout(()=>el.style.display='none',3000);
-      setTimeout(checkRelayStatus,2000);
+      setTimeout(checkRelayStatus,1500);
+      setTimeout(checkServices,2000);
     }else{
       el.style.color='var(--danger)';
       el.textContent='Save failed: '+j.error;
