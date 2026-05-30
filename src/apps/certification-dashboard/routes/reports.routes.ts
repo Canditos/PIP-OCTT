@@ -1,8 +1,8 @@
 // ══════════════════════════════════════════════════════════════
-// Reports Routes — View logs and download reports (v2 - 2026-05-30)
-// Uses getReports() + downloadReports() from OcttClient
+// Reports Routes — View logs and download reports (v3 - 2026-05-30)
+// Uses getReports() + downloadReports() and extracts the detailed log file
 // ══════════════════════════════════════════════════════════════
-console.log("[reports.routes] Module loaded - using getReports/downloadReports");
+console.log("[reports.routes] Module loaded - using getReports/downloadReports and yauzl");
 
 import { Router } from "express";
 import { OcttClient } from "../../../connectors/octt/index.js";
@@ -11,9 +11,46 @@ import { log } from "./logs.routes.js";
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
+import yauzl from "yauzl";
 
 const router = Router();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+/**
+ * Extracts the first .log file content from a ZIP buffer.
+ */
+function unzipFirstLogFile(zipBuffer: Buffer): Promise<string> {
+    return new Promise((resolve, reject) => {
+        yauzl.fromBuffer(zipBuffer, { lazyEntries: true }, (err, zipfile) => {
+            if (err) return reject(err);
+            if (!zipfile) return reject(new Error("Could not read ZIP file"));
+            let found = false;
+            zipfile.readEntry();
+            zipfile.on("entry", (entry) => {
+                const entryName = entry.fileName;
+                if (entryName.toLowerCase().endsWith(".log")) {
+                    found = true;
+                    zipfile.openReadStream(entry, (err, readStream) => {
+                        if (err) return reject(err);
+                        if (!readStream) return reject(new Error("Could not open read stream"));
+                        const chunks: Buffer[] = [];
+                        readStream.on("data", (chunk) => chunks.push(chunk));
+                        readStream.on("end", () => {
+                            resolve(Buffer.concat(chunks).toString("utf8"));
+                        });
+                        readStream.on("error", reject);
+                    });
+                } else {
+                    zipfile.readEntry();
+                }
+            });
+            zipfile.on("end", () => {
+                if (!found) reject(new Error("No .log file found in ZIP archive"));
+            });
+            zipfile.on("error", reject);
+        });
+    });
+}
 
 router.post("/view-log", async (req, res) => {
     const { testcaseName, configurationName } = req.body;
@@ -25,16 +62,20 @@ router.post("/view-log", async (req, res) => {
             return;
         }
         const latestReport = reports.data[0];
-        const logfileName = latestReport.logfile;
+        const logfileName = path.basename(latestReport.logfile);
         const configName = latestReport.configuration;
 
-        const fileContent = await octt.downloadReports({
-            format: "CSV",
+        // Download ZIP file from OCTT which contains the raw log
+        const zipContent = await octt.downloadReports({
+            format: "ZIP",
             configuration_name: configName,
             logfile_name: logfileName
         });
 
-        res.json({ ok: true, content: fileContent.toString("utf8") });
+        // Unzip and extract the detailed .log file content
+        const logContent = await unzipFirstLogFile(zipContent);
+
+        res.json({ ok: true, content: logContent });
     } catch (e: any) {
         log("warn", `View log failed: ${e.message}`, "reports");
         res.status(500).json({ ok: false, error: e.message });
@@ -51,24 +92,29 @@ router.post("/download", async (req, res) => {
             return;
         }
         const latestReport = reports.data[0];
-        const logfileName = latestReport.logfile;
+        const logfileName = path.basename(latestReport.logfile);
         const configName = latestReport.configuration;
 
-        const fileContent = await octt.downloadReports({
-            format: format || "CSV",
+        // Download ZIP file from OCTT which contains the raw log
+        const zipContent = await octt.downloadReports({
+            format: "ZIP",
             configuration_name: configName,
             logfile_name: logfileName
         });
 
-        const filename = `${testcaseName}_Report_${Date.now()}.${(format || "CSV").toLowerCase()}`;
+        // Unzip and extract the detailed .log file content
+        const logContent = await unzipFirstLogFile(zipContent);
+
+        // Save as a .log file in the reports directory so the user gets the actual log
+        const filename = `${testcaseName}_Log_${Date.now()}.log`;
         const reportsDir = path.join(__dirname, "../public/reports");
         if (!fs.existsSync(reportsDir)) {
             fs.mkdirSync(reportsDir, { recursive: true });
         }
         const filepath = path.join(reportsDir, filename);
-        await fs.promises.writeFile(filepath, fileContent);
+        await fs.promises.writeFile(filepath, logContent, "utf8");
 
-        res.json({ ok: true, filename, size: fileContent.length });
+        res.json({ ok: true, filename, size: logContent.length });
     } catch (e: any) {
         log("warn", `Download failed: ${e.message}`, "reports");
         res.status(500).json({ ok: false, error: e.message });
