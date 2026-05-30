@@ -50,7 +50,7 @@ router.post("/config-timeouts", validate(octtConfigTimeoutsSchema), async (req, 
     try {
         const octt = new OcttClient(effectiveConfig.octt);
         const current = await octt.getConfiguration(configurationName || "AUT_SID_SAT");
-        const updated = { ...current.data.config };
+        const updated = { ...current.data.Config };
         if (maxTimeoutPeriod !== undefined) updated.max_timeout_period = String(maxTimeoutPeriod);
         if (longOperationTimeout !== undefined) updated.long_operation_timeout = String(longOperationTimeout);
         await octt.saveConfiguration(configurationName || "AUT_SID_SAT", updated);
@@ -68,7 +68,7 @@ router.post("/prepare-reboot", async (req, res) => {
         try { await octt.stopSession(); } catch { /* no session */ }
         await new Promise(r => setTimeout(r, 2000));
         const current = await octt.getConfiguration(configurationName || "AUT_SID_SAT");
-        const updated = { ...current.data.config, max_timeout_period: "600", long_operation_timeout: "650" };
+        const updated = { ...current.data.Config, max_timeout_period: "600", long_operation_timeout: "650" };
         await octt.saveConfiguration(configurationName || "AUT_SID_SAT", updated);
         log("info", `Reboot timeouts applied for ${configurationName || "AUT_SID_SAT"}`, "octt");
         res.json({ ok: true, message: "Reboot timeouts applied (600/650)" });
@@ -83,7 +83,7 @@ router.post("/restore-defaults", async (req, res) => {
     try {
         const octt = new OcttClient(effectiveConfig.octt);
         const current = await octt.getConfiguration(configurationName || "AUT_SID_SAT");
-        const updated = { ...current.data.config, max_timeout_period: "70", long_operation_timeout: "450" };
+        const updated = { ...current.data.Config, max_timeout_period: "70", long_operation_timeout: "450" };
         await octt.saveConfiguration(configurationName || "AUT_SID_SAT", updated);
         log("info", `Default timeouts restored for ${configurationName || "AUT_SID_SAT"}`, "octt");
         res.json({ ok: true, message: "Default timeouts restored (70/450)" });

@@ -354,6 +354,45 @@
   </div>
 </div>
 </div>
+<!-- ══════════════════════════════════════════════════════════════
+     MODAL: CDS Connection Fix (Auto-shows when CDS check fails)
+     Allows user to update CDS IP/port/sink/profile and retry
+     without leaving the test execution flow.
+     ══════════════════════════════════════════════════════════════ -->
+<div class="modal-bg" id="cds-fix-modal-bg" style="z-index:103">
+<div class="modal" style="width:min(500px,95vw)">
+  <div class="modal-head">
+    <span>&#9888; CDS Connection Failed</span>
+    <span id="cds-fix-status" style="color:var(--danger);font-size:10px">Unreachable</span>
+  </div>
+  <div class="modal-body" style="padding:16px;display:flex;flex-direction:column;gap:8px">
+    <div style="font-size:10px;color:var(--text-dim);margin-bottom:2px">
+      <span id="cds-fix-count" style="color:var(--warn);font-weight:bold">0</span> selected tests require the CDS (EV simulator).
+      Update the settings below and retry, or skip CDS tests.
+    </div>
+    <div id="cds-fix-error" style="font-size:9px;color:var(--danger);padding:8px;background:rgba(255,60,60,0.08);border-radius:4px;border:1px solid rgba(255,60,60,0.2);font-family:var(--font);word-break:break-all"></div>
+    <div style="display:flex;gap:8px">
+      <div style="flex:3"><label class="f">IP Address</label><input type="text" id="cds-fix-ip" style="width:100%" placeholder="192.168.100.10"></div>
+      <div style="flex:1"><label class="f">Sink</label><input type="number" id="cds-fix-sink" style="width:100%" placeholder="12"></div>
+    </div>
+    <label class="f">Charge Profile</label>
+    <select id="cds-fix-profile" style="width:100%">
+      <option value="CCS_900V_300A">CCS 900V/300A/50kW ISO15118</option>
+      <option value="CCS_500V_125A">CCS 500V/125A/25kW</option>
+      <option value="CCS_1000V_400A">CCS 1000V/400A/150kW</option>
+      <option value="CCS_DIN_500V_125A">DIN70121 500V/125A/50kW</option>
+    </select>
+    <div id="cds-fix-result" style="font-size:9px;color:var(--text-dim);display:none;margin-top:2px"></div>
+  </div>
+  <div class="modal-tools" style="border-top:1px solid var(--border);padding:10px 18px">
+    <button class="sm" onclick="closeCdsFixModal('cancel')">Cancel</button>
+    <button class="sm" onclick="closeCdsFixModal('skip')" style="border-color:var(--warn);color:var(--warn)" title="Run only tests that don't need CDS">&#9654; Skip CDS Tests</button>
+    <div style="flex:1"></div>
+    <button class="sm primary" id="btn-cds-fix-retry" onclick="retryCdsCheck()">&#128260; Retry Connection</button>
+  </div>
+</div>
+</div>
+
 
 <script>
 // ══════════════════════════════════════════════════════════════
@@ -377,6 +416,10 @@ let tcDescriptions={};
 
 /** Global counter for sequential test case numbering in the modal */
 let tcIdx=0;
+
+/** CDS fix modal — resolve callback and selected tests backup */
+let _cdsFixResolve=null;
+let _cdsFixSelected=[];
 
 /**
  * Keywords used to infer whether a test case modifies the CDS charging state.
@@ -410,7 +453,8 @@ function connectSSE(){
   // Log events → append to the log panel
   es.addEventListener('log',e=>addLog(JSON.parse(e.data)));
   // Status events → update service indicators
-  es.addEventListener('status',e=>{const s=JSON.parse(e.data);if(s.cds)updSvc('cds',s.cds);if(s.octt)updSvc('octt',s.octt);if(s.jira)updSvc('jira',s.jira)});
+  // Backend sends flat: { service:"octt", status:"connected", info:"..." }
+  es.addEventListener('status',e=>{const s=JSON.parse(e.data);if(s.service){updSvc(s.service,{status:s.status,info:s.info})}else{if(s.cds)updSvc('cds',s.cds);if(s.octt)updSvc('octt',s.octt);if(s.jira)updSvc('jira',s.jira)}});
   // Pipeline events → update banner, results, and button states
   es.addEventListener('pipeline',e=>{
     const p=JSON.parse(e.data);
@@ -528,6 +572,105 @@ async function configureCds(){
 }
 
 // ══════════════════════════════════════════════════════════════
+// SECTION: CDS Fix Modal
+// Shows when CDS is unreachable during pre-flight. Allows the
+// user to update IP/port/sink/profile and retry or skip.
+// ══════════════════════════════════════════════════════════════
+
+/**
+ * Attempts a CDS check; if it fails, opens the fix modal and
+ * returns a Promise that resolves to 'ok', 'skip', or 'cancel'.
+ */
+async function checkCdsWithRetry(ip,port,cdsTestCount,selected){
+  try{
+    const r=await fetch(API+'/api/cds/check',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip,port})});
+    const j=await r.json();
+    if(j.ok){
+      addLog({timestamp:new Date().toISOString(),level:'success',message:'CDS OK: '+(j.flags||[]).join(', '),service:'ui'});
+      return 'ok';
+    }
+    // CDS failed — show fix modal
+    return openCdsFixModal(j.error||'No response',cdsTestCount);
+  }catch(e){
+    return openCdsFixModal(e.message||'Network error',cdsTestCount);
+  }
+}
+
+/**
+ * Opens the CDS fix modal pre-filled with current sidebar values.
+ * Returns a Promise that resolves when the user picks an action.
+ */
+function openCdsFixModal(errorMsg,cdsTestCount){
+  $('cds-fix-ip').value=$('inp-cds').value;
+  $('cds-fix-sink').value=$('inp-sink').value;
+  $('cds-fix-profile').value=$('sel-profile').value;
+  $('cds-fix-error').textContent=errorMsg;
+  $('cds-fix-count').textContent=cdsTestCount;
+  $('cds-fix-status').textContent='Unreachable';
+  $('cds-fix-status').style.color='var(--danger)';
+  $('cds-fix-result').style.display='none';
+  $('btn-cds-fix-retry').disabled=false;
+  $('cds-fix-modal-bg').style.display='flex';
+  return new Promise(resolve=>{_cdsFixResolve=resolve});
+}
+
+/**
+ * Closes the CDS fix modal with the given action.
+ * @param action - 'cancel', 'skip', or 'ok'
+ */
+function closeCdsFixModal(action){
+  $('cds-fix-modal-bg').style.display='none';
+  if(_cdsFixResolve){_cdsFixResolve(action);_cdsFixResolve=null}
+}
+
+/**
+ * Retries the CDS connection with the values from the fix modal.
+ * On success, syncs values back to the sidebar and closes the modal.
+ */
+async function retryCdsCheck(){
+  const ip=$('cds-fix-ip').value.trim();
+  const port=parseInt($('inp-cds-port').value)||51001;
+  const el=$('cds-fix-result');
+  el.style.display='block';
+  el.style.color='var(--text-dim)';
+  el.textContent='Connecting to '+ip+':'+port+'...';
+  $('cds-fix-status').textContent='Connecting...';
+  $('cds-fix-status').style.color='var(--text-dim)';
+  $('btn-cds-fix-retry').disabled=true;
+  try{
+    const r=await fetch(API+'/api/cds/check',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip,port})});
+    const j=await r.json();
+    if(j.ok){
+      el.style.color='var(--pass)';
+      el.textContent='Connected! Status: '+(j.flags||[]).join(', ');
+      $('cds-fix-status').textContent='Connected';
+      $('cds-fix-status').style.color='var(--pass)';
+      // Sync values back to sidebar
+      $('inp-cds').value=ip;
+      $('inp-cds-port').value=port;
+      $('inp-sink').value=$('cds-fix-sink').value;
+      $('sel-profile').value=$('cds-fix-profile').value;
+      addLog({timestamp:new Date().toISOString(),level:'success',message:`CDS reconnected at ${ip}:${port}`,service:'ui'});
+      // Auto-close after a brief pause
+      setTimeout(()=>closeCdsFixModal('ok'),800);
+    }else{
+      el.style.color='var(--danger)';
+      el.textContent='Still unreachable: '+(j.error||'No response');
+      $('cds-fix-status').textContent='Failed';
+      $('cds-fix-status').style.color='var(--danger)';
+      $('cds-fix-error').textContent=j.error||'No response';
+      $('btn-cds-fix-retry').disabled=false;
+    }
+  }catch(e){
+    el.style.color='var(--danger)';
+    el.textContent='Error: '+e.message;
+    $('cds-fix-status').textContent='Error';
+    $('cds-fix-status').style.color='var(--danger)';
+    $('btn-cds-fix-retry').disabled=false;
+  }
+}
+
+
 // SECTION: Pipeline Control (Playwright)
 // ══════════════════════════════════════════════════════════════
 
@@ -562,19 +705,14 @@ async function runPlaywright(){
   // ── Pre-flight: CDS (only if needed) ──
   if(cdsRequired){
     addLog({timestamp:new Date().toISOString(),level:'info',message:`Pre-flight: checking CDS (${cdsOnlyCount} tests need it)...`,service:'ui'});
-    try{
-      const cdsCheck=await fetch(API+'/api/cds/check',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip:$('inp-cds').value,port:parseInt($('inp-cds-port').value)})});
-      const cdsStatus=await cdsCheck.json();
-      if(!cdsStatus.ok){
-        addLog({timestamp:new Date().toISOString(),level:'error',message:'CDS unreachable: '+(cdsStatus.error||'timeout')+'. Check IP/port and network.',service:'ui'});
-        $('banner').classList.add('active','error');
-        $('banner-msg').textContent='CDS not reachable — check network/IP';
-        return;
-      }
-      addLog({timestamp:new Date().toISOString(),level:'success',message:'CDS OK: '+(cdsStatus.flags||[]).join(', '),service:'ui'});
-    }catch(e){
-      addLog({timestamp:new Date().toISOString(),level:'error',message:'CDS check failed: '+e.message+'. Is the server running?',service:'ui'});
-      return;
+    const cdsOk=await checkCdsWithRetry($('inp-cds').value,parseInt($('inp-cds-port').value),cdsOnlyCount,selected);
+    if(cdsOk==='cancel')return;
+    if(cdsOk==='skip'){
+      // Remove CDS tests from selection and continue
+      const nonCds=selected.filter(t=>!needsCds(t));
+      if(nonCds.length===0){addLog({timestamp:new Date().toISOString(),level:'warn',message:'All selected tests require CDS — nothing to run.',service:'ui'});return}
+      addLog({timestamp:new Date().toISOString(),level:'warn',message:`Skipping ${cdsOnlyCount} CDS tests. Running ${nonCds.length} remaining.`,service:'ui'});
+      selected.length=0;selected.push(...nonCds);
     }
   }else{
     addLog({timestamp:new Date().toISOString(),level:'info',message:`Pre-flight: skipping CDS check (${noCdsCount}/${selected.length} tests do not need CDS)`,service:'ui'});

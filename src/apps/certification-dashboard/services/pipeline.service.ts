@@ -43,7 +43,7 @@ export async function runPlaywright(testcaseNames: string[], configName: string)
             try { await octt.stopSession(); } catch { /* no session */ }
             await new Promise(r => setTimeout(r, 2000));
             const current = await octt.getConfiguration(configName);
-            const updated = { ...current.data.config, ...REBOOT_TIMEOUTS };
+            const updated = { ...current.data.Config, ...REBOOT_TIMEOUTS };
             await octt.saveConfiguration(configName, updated);
             rebootApplied = true;
             broadcastLog("info", "Reboot timeouts applied", "playwright");
@@ -102,7 +102,7 @@ export async function runPlaywright(testcaseNames: string[], configName: string)
             CDS_IP: effectiveConfig.cds.ip,
             CDS_PORT: String(effectiveConfig.cds.port),
         },
-    });
+    } as any);
 
     // Parse stdout
     const pendingVerdicts: { verdict: string; duration: number }[] = [];
@@ -158,7 +158,7 @@ export async function runPlaywright(testcaseNames: string[], configName: string)
             try {
                 const octt = new OcttClient(effectiveConfig.octt);
                 const current = await octt.getConfiguration(configName);
-                const updated = { ...current.data.config, ...DEFAULT_TIMEOUTS };
+                const updated = { ...current.data.Config, ...DEFAULT_TIMEOUTS };
                 await octt.saveConfiguration(configName, updated);
                 broadcastLog("info", "Default timeouts restored", "playwright");
             } catch (e: any) {

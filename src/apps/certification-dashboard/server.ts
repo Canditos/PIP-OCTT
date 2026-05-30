@@ -16,6 +16,7 @@ import { effectiveConfig } from "./config/dashboard.config.js";
 
 // Services
 import { addClient, removeClient } from "./services/sse.service.js";
+import { getAllServices } from "./services/service-state.service.js";
 import { log } from "./routes/logs.routes.js";
 
 // Middleware
@@ -72,6 +73,13 @@ app.get("/api/events", (req, res) => {
 
     const id = addClient(res);
     res.write(`event: connected\ndata: ${JSON.stringify({ clientId: id })}\n\n`);
+
+    // Send current service states so the UI lights are correct immediately
+    const services = getAllServices();
+    for (const [key, state] of Object.entries(services)) {
+        const s = state as any;
+        res.write(`event: status\ndata: ${JSON.stringify({ service: key, status: s.status, info: s.info })}\n\n`);
+    }
 
     req.on("close", () => removeClient(id));
 });

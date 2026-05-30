@@ -61,13 +61,13 @@ function decryptValue(value: string): string {
  * Returns a new object — does NOT mutate.
  */
 export function encryptConfig<T extends Record<string, any>>(config: T): T {
-    const result = { ...config };
+    const result = { ...config } as Record<string, any>;
     for (const field of SENSITIVE_FIELDS) {
         if (typeof result[field] === "string" && result[field] && !result[field].startsWith("enc:")) {
             result[field] = encryptValue(result[field]);
         }
     }
-    return result;
+    return result as T;
 }
 
 /**
@@ -75,11 +75,11 @@ export function encryptConfig<T extends Record<string, any>>(config: T): T {
  * Returns a new object — does NOT mutate.
  */
 export function decryptConfig<T extends Record<string, any>>(config: T): T {
-    const result = { ...config };
+    const result = { ...config } as Record<string, any>;
     for (const field of SENSITIVE_FIELDS) {
         if (typeof result[field] === "string" && result[field]) {
             result[field] = decryptValue(result[field]);
         }
     }
-    return result;
+    return result as T;
 }
