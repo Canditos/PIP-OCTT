@@ -316,7 +316,8 @@ Object.entries(testSuites).forEach(([suiteName, tests]) => {
                     } else {
                         const body = await resp.json();
                         const rawVerdict = (body.data?.[0]?.verdict ?? 'ERROR').toLowerCase();
-                        duration = body.data?.[0]?.duration ?? 0;
+                        duration = (body.data?.[0]?.duration ?? 0) / 1000;
+                        const message = body.data?.[0]?.message ?? '';
 
                         // Detect SUT disconnection (network/hardware issue, not a CP bug)
                         // OCTT logs contain "SUT__DISCONNECTED" when the WebSocket drops.
@@ -329,6 +330,9 @@ Object.entries(testSuites).forEach(([suiteName, tests]) => {
                             sutDisconnected = true;
                         } else {
                             verdict = rawVerdict;
+                            if (verdict !== 'pass' && message) {
+                                console.log(`[OCTT-MESSAGE] ${message}`);
+                            }
                         }
                     }
                 } catch (execError: any) {

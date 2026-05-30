@@ -75,6 +75,113 @@ router.post("/upload-execution", validate(jiraUploadSchema), async (req, res) =>
     }
 });
 
+router.post("/create-defect", async (req, res) => {
+    // Creates a Jira defect (Bug) for a failing/inconc/error test case
+    // with AI-generated description based on test metadata and log context.
+    const { testCase, verdict } = req.body;
+    if (!testCase || !verdict) {
+        return res.status(400).json({ ok: false, error: "testCase and verdict are required" });
+    }
+
+    try {
+        const client = new JiraClient(effectiveConfig.jira);
+
+        // Check for existing open issue for this test case to prevent duplicates
+        const existing = await client.findExistingIssue(testCase, verdict);
+        if (existing) {
+            return res.json({
+                ok: true,
+                issueKey: existing.key,
+                url: `${effectiveConfig.jira.baseUrl}/browse/${existing.key}`,
+                existing: true,
+                message: `Existing open issue found: ${existing.key}`,
+            });
+        }
+
+        // Fetch test case details from testcases route data
+        let testCaseDescription = "";
+        let testCaseSuite = "";
+        const { getAllTestCases } = await import("./testcases.routes.js");
+        try {
+            const all = getAllTestCases();
+            const found = (all as any[]).find((t: any) => t.id === testCase);
+            if (found) {
+                testCaseDescription = found.description || "";
+                testCaseSuite = found.suite || "";
+            }
+        } catch { /* ignore */ }
+
+        // Try to get log context for this test case from log files
+        let logContext = "";
+        try {
+            const fs = await import("fs");
+            const path = await import("path");
+            const { fileURLToPath } = await import("url");
+            const __dirname = path.dirname(fileURLToPath(import.meta.url));
+            const logDir = path.resolve(__dirname, "../../../../logs");
+            // Find the most recent log file that contains this test case
+            const files = fs.existsSync(logDir) ? fs.readdirSync(logDir).filter((f: string) => f.endsWith(".log")).sort().reverse() : [];
+            for (const f of files.slice(0, 5)) {
+                if (logContext.length > 2000) break;
+                const content = fs.readFileSync(path.join(logDir, f), "utf-8");
+                const lines = content.split("\n").filter((l: string) => l.includes(testCase));
+                if (lines.length > 0) {
+                    logContext += lines.slice(0, 15).join("\n") + "\n";
+                }
+            }
+            if (logContext.length > 3000) logContext = logContext.slice(0, 3000) + "\n... (truncated)";
+        } catch { /* ignore */ }
+
+        const summary = `[OCPP 1.6] ${testCase} — ${verdict.toUpperCase()}`;
+        const description = [
+            `h2. Test Failure Report`,
+            `|| Field || Value ||`,
+            `| Test Case | ${testCase} |`,
+            `| Verdict | ${verdict} |`,
+            `| Suite | ${testCaseSuite || "—"} |`,
+            `| Description | ${testCaseDescription || "—"} |`,
+            ``,
+            `h3. AI Analysis`,
+            `This defect was automatically generated from the certification pipeline.`,
+            verdict === "fail" ? `The test case ${testCase} failed during execution.` :
+            verdict === "inconc" ? `The test case ${testCase} completed with an inconclusive verdict (likely infrastructure timeout).` :
+            `The test case ${testCase} encountered an error during execution.`,
+            ``,
+            logContext ? [
+                `h3. Log Context`,
+                `{code}${logContext}{code}`,
+            ].join("\n") : `h3. Log Context`,
+            logContext ? "" : "No detailed logs available for this test case.",
+            ``,
+            `h3. Suggested Next Steps`,
+            `# Review the test execution logs for ${testCase}.`,
+            `# Check if the OCTT cloud proxy timeout (10 min) was exceeded.`,
+            `# Verify SUT WebSocket connection stability.`,
+            `# Re-run the test to confirm reproducibility.`,
+            `# Update this defect with findings.`,
+        ].filter(Boolean).join("\n");
+
+        const issue = await client.createIssue({
+            summary,
+            description,
+            issueType: "Bug",
+            priority: verdict === "error" ? "Highest" : verdict === "fail" ? "High" : "Medium",
+            labels: ["ocpp", "certification", "defect", testCase, verdict],
+        });
+
+        log("info", `Created defect ${issue.key} for ${testCase} (${verdict})`, "jira");
+        res.json({
+            ok: true,
+            issueKey: issue.key,
+            url: `${effectiveConfig.jira.baseUrl}/browse/${issue.key}`,
+            existing: false,
+        });
+    } catch (e: any) {
+        log("error", `Defect creation failed: ${e.message}`, "jira");
+        res.status(500).json({ ok: false, error: e.message });
+    }
+});
+
 router.post("/upload", async (req, res) => {
     const { testcase, testplan, testexecution, ocppVersion, chargerNumber, comment } = req.body;
     try {

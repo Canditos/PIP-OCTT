@@ -30,6 +30,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>OCPP Certification Pipeline</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
   if(localStorage.getItem('theme')==='light')document.documentElement.classList.add('light-theme');
 </script>
@@ -138,6 +139,23 @@
   .log-lvl.info{color:var(--info)}.log-lvl.warn{color:var(--warn)}.log-lvl.error{color:var(--danger)}.log-lvl.success{color:var(--pass)}
   .log-svc{color:var(--accent2);flex-shrink:0;font-size:9px}
   .log-msg{color:var(--text);word-break:break-all}
+  .tabs{display:flex;gap:0;border-bottom:1px solid var(--border);background:var(--surface);flex-shrink:0}
+  .tab-btn{padding:8px 20px;font-size:10px;font-weight:600;border:none;background:transparent;color:var(--text-dim);cursor:pointer;border-bottom:2px solid transparent;transition:.15s;font-family:var(--ui)}
+  .tab-btn:hover{color:var(--text-bright);background:color-mix(in srgb,var(--accent) 5%,transparent)}
+  .tab-btn.active{color:var(--accent2);border-bottom-color:var(--accent2)}
+  #view-history{display:none;flex-direction:column;flex:1;overflow:hidden}
+  #view-current{display:flex;flex-direction:column;flex:1;overflow:hidden}
+  #view-history .logs{flex:none;max-height:30vh}
+  .history-table-wrap{overflow-y:auto;flex:1}
+  .history-table-wrap table{font-size:10px}
+  .history-table-wrap td{cursor:pointer}
+  .history-table-wrap tr.selected td{background:color-mix(in srgb,var(--accent) 10%,transparent)}
+  .history-table-wrap tr:hover td{background:color-mix(in srgb,var(--accent) 6%,transparent)}
+  #history-details{display:none;flex-direction:column;gap:8px;padding:12px;border-top:1px solid var(--border);background:var(--surface);max-height:50vh;overflow-y:auto}
+  #history-details.visible{display:flex}
+  .charts-row{display:flex;gap:12px;flex-wrap:wrap}
+  .chart-container{flex:1;min-width:200px;height:200px;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px;position:relative}
+  .empty-state{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px;color:var(--text-dim);font-size:11px;gap:8px}
   .results{background:var(--surface);max-height:45vh;overflow-y:auto;border-top:1px solid var(--border);flex-shrink:0}
   .res-summary{display:flex;gap:12px;padding:8px 16px;border-bottom:1px solid var(--border);font-size:10px;align-items:center;flex-wrap:wrap}
   .res-summary .stat{display:flex;align-items:center;gap:4px}.res-summary .val{font-weight:700;font-size:14px;font-family:var(--font)}
@@ -259,7 +277,7 @@
 
 <!-- ══════════════════════════════════════════════════════════════
      MAIN CONTENT AREA
-     Banner (pipeline state), log stream, and results table.
+     Banner (pipeline state), tabs, log stream, results table, history.
      ══════════════════════════════════════════════════════════════ -->
 <main>
   <!-- Pipeline status banner (hidden when idle) -->
@@ -273,22 +291,50 @@
     <span id="banner-msg">Idle</span>
   </div>
 
-  <!-- Real-time log output from SSE -->
-  <div class="logs" id="logs"></div>
+  <!-- Tab navigation -->
+  <div class="tabs">
+    <button class="tab-btn active" id="tab-current" onclick="switchTab('current')">&#9654; Current Run</button>
+    <button class="tab-btn" id="tab-history" onclick="switchTab('history')">&#128196; Run History</button>
+  </div>
 
-  <!-- Test results with pass/fail breakdown -->
-  <div class="results">
-    <div class="res-summary">
-      <span style="font-size:9px;text-transform:uppercase;letter-spacing:.8px;color:var(--text-dim)">Results</span>
-      <!-- Progress bar showing pass/fail/inconc/error proportions -->
-      <div class="pbar"><div class="pb-p" id="pb-p" style="width:0%;background:var(--pass)"></div><div class="pb-f" id="pb-f" style="width:0%;background:var(--fail)"></div><div class="pb-i" id="pb-i" style="width:0%;background:var(--inconc)"></div><div class="pb-e" id="pb-e" style="width:0%;background:var(--error)"></div></div>
-      <div class="stat pass"><span style="width:7px;height:7px;background:var(--pass);border-radius:2px;display:inline-block"></span> <span class="val" id="r-p">0</span> PASS</div>
-      <div class="stat fail"><span style="width:7px;height:7px;background:var(--fail);border-radius:2px;display:inline-block"></span> <span class="val" id="r-f">0</span> FAIL</div>
-      <div class="stat inconc"><span style="width:7px;height:7px;background:var(--inconc);border-radius:2px;display:inline-block"></span> <span class="val" id="r-i">0</span> INCONC</div>
-      <div class="stat err"><span style="width:7px;height:7px;background:var(--error);border-radius:2px;display:inline-block"></span> <span class="val" id="r-e">0</span> ERROR</div>
-      <span style="font-weight:700;font-size:12px;color:var(--text-bright);margin-left:6px" id="r-rate">—</span>
+  <!-- View: Current Run -->
+  <div id="view-current">
+    <div class="logs" id="logs"></div>
+    <div class="results">
+      <div class="res-summary">
+        <span style="font-size:9px;text-transform:uppercase;letter-spacing:.8px;color:var(--text-dim)">Results</span>
+        <div class="pbar"><div class="pb-p" id="pb-p" style="width:0%;background:var(--pass)"></div><div class="pb-f" id="pb-f" style="width:0%;background:var(--fail)"></div><div class="pb-i" id="pb-i" style="width:0%;background:var(--inconc)"></div><div class="pb-e" id="pb-e" style="width:0%;background:var(--error)"></div></div>
+        <div class="stat pass"><span style="width:7px;height:7px;background:var(--pass);border-radius:2px;display:inline-block"></span> <span class="val" id="r-p">0</span> PASS</div>
+        <div class="stat fail"><span style="width:7px;height:7px;background:var(--fail);border-radius:2px;display:inline-block"></span> <span class="val" id="r-f">0</span> FAIL</div>
+        <div class="stat inconc"><span style="width:7px;height:7px;background:var(--inconc);border-radius:2px;display:inline-block"></span> <span class="val" id="r-i">0</span> INCONC</div>
+        <div class="stat err"><span style="width:7px;height:7px;background:var(--error);border-radius:2px;display:inline-block"></span> <span class="val" id="r-e">0</span> ERROR</div>
+        <span style="font-weight:700;font-size:12px;color:var(--text-bright);margin-left:6px" id="r-rate">—</span>
+      </div>
+      <table><thead><tr><th>#</th><th>Test Case</th><th>Verdict</th><th>Duration</th><th style="text-align:right">Actions</th></tr></thead><tbody id="rtbody"><tr><td colspan="5" style="color:var(--text-dim);text-align:center;padding:16px">No results yet</td></tr></tbody></table>
     </div>
-    <table><thead><tr><th>#</th><th>Test Case</th><th>Verdict</th><th>Duration</th><th style="text-align:right">Actions</th></tr></thead><tbody id="rtbody"><tr><td colspan="5" style="color:var(--text-dim);text-align:center;padding:16px">No results yet</td></tr></tbody></table>
+  </div>
+
+  <!-- View: Run History -->
+  <div id="view-history">
+    <div class="history-table-wrap">
+      <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--border)">
+        <span style="font-size:9px;text-transform:uppercase;letter-spacing:.8px;color:var(--text-dim)">Past Runs</span>
+        <button class="sm" onclick="fetchHistory()" style="margin-left:auto;border-color:var(--accent);color:var(--accent)">&#8635; Refresh</button>
+        <button class="sm" onclick="clearHistory()" style="border-color:var(--danger);color:var(--danger)">&#128465; Clear</button>
+      </div>
+      <table><thead><tr><th>Date</th><th>Config</th><th>Total</th><th>PASS</th><th>FAIL</th><th>INCONC</th><th>Rate</th><th style="text-align:right">Details</th></tr></thead><tbody id="htbody"><tr><td colspan="8" style="color:var(--text-dim);text-align:center;padding:16px">No past runs</td></tr></tbody></table>
+    </div>
+    <div id="history-details">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <span style="font-size:10px;font-weight:700;color:var(--text-bright)" id="hd-title">Run Details</span>
+        <button class="sm" onclick="closeRunDetails()" style="flex:none">&#10005; Close</button>
+      </div>
+      <div class="charts-row">
+        <div class="chart-container"><canvas id="chart-pie"></canvas></div>
+        <div class="chart-container"><canvas id="chart-bar"></canvas></div>
+      </div>
+      <div style="overflow-y:auto;max-height:200px" id="hd-table-wrap"></div>
+    </div>
   </div>
 </main>
 </div>
@@ -328,6 +374,7 @@
     <button class="sm" onclick="selMaint()">Maintenance</button>
     <button class="sm" onclick="selReboot()">Reboot</button>
     <button class="sm" onclick="selCore()">Core Only</button>
+    <button class="sm" onclick="selNoCds()" style="border-color:var(--accent2);color:var(--accent2)" title="Select only tests that work without the Keysight CDS EV simulator">&#128268; No CDS</button>
     <div style="flex:1"></div>
     <button class="sm primary" onclick="closeModal()">Done</button>
   </div>
@@ -829,11 +876,14 @@ async function runPlaywright(){
     return;
   }
 
+  // Reset current results immediately
+  try{await fetch(API+'/api/results/reset',{method:'POST'})}catch(e){}
+  resetResults();
   updBtns(true);
   $('banner').classList.add('active','running');
   $('banner-msg').textContent=`Running ${selected.length} tests...`;
   $('spinner').style.display='block';
-  $('rtbody').innerHTML='<tr><td colspan="4" style="color:var(--text-dim);text-align:center;padding:16px">Running...</td></tr>';
+  $('rtbody').innerHTML='<tr><td colspan="5" style="color:var(--text-dim);text-align:center;padding:16px">Running...</td></tr>';
   $('logs').innerHTML='';logCount=0;
   try{
     await fetch(API+'/api/pipeline/run-playwright',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({testcaseNames:selected,configurationName:$('inp-config').value})});
@@ -860,6 +910,17 @@ async function fetchResults(){
 // ══════════════════════════════════════════════════════════════
 // SECTION: Results Rendering
 // ══════════════════════════════════════════════════════════════
+
+/**
+ * Resets all current run statistics to initial empty state.
+ * Called immediately when a new run starts.
+ */
+function resetResults(){
+  $('r-p').textContent='0';$('r-f').textContent='0';$('r-i').textContent='0';$('r-e').textContent='0';
+  $('pb-p').style.width='0%';$('pb-f').style.width='0%';$('pb-i').style.width='0%';$('pb-e').style.width='0%';
+  $('r-rate').textContent='—';
+  $('rtbody').innerHTML='<tr><td colspan="5" style="color:var(--text-dim);text-align:center;padding:16px">No results yet</td></tr>';
+}
 
 /**
  * Updates the summary statistics and progress bar from an array
@@ -899,7 +960,8 @@ function renderResultsTable(data){
     const logBtn=`<button class="sm" onclick="viewLog('${result.testCase}')" title="View Log">Log</button>`;
     const dlBtn=`<button class="sm" onclick="downloadLog('${result.testCase}')" title="Download Report">DL</button>`;
     const jiraBtn=isFailure?`<button class="sm" onclick="openJiraModal('${result.testCase}','${verdict}')" title="Upload to Jira" style="border-color:var(--accent2);color:var(--accent2)">Jira</button>`:'';
-    return `<tr><td style="color:var(--text-dim)">${index+1}</td><td style="color:var(--text-bright)">${result.testCase}</td><td><span class="vb ${verdict}">${result.verdict}</span></td><td style="color:var(--text-dim)">${result.duration||0}s</td><td style="text-align:right;white-space:nowrap">${logBtn} ${dlBtn} ${jiraBtn}</td></tr>`;
+    const defectBtn=isFailure?`<button class="sm" onclick="createDefect('${result.testCase}','${verdict}')" title="Create Defect in Jira" style="border-color:var(--danger);color:var(--danger)">&#128295; Defect</button>`:'';
+    return `<tr><td style="color:var(--text-dim)">${index+1}</td><td style="color:var(--text-bright)">${result.testCase}</td><td><span class="vb ${verdict}">${result.verdict}</span></td><td style="color:var(--text-dim)">${result.duration||0}s</td><td style="text-align:right;white-space:nowrap">${logBtn} ${dlBtn} ${jiraBtn} ${defectBtn}</td></tr>`;
   }).join('');
 }
 
@@ -1066,6 +1128,18 @@ function selMaint(){document.querySelectorAll('.tc-check').forEach(c=>{c.checked
 function selReboot(){
   const rebootTests=['TC_001_CS','TC_002_CS','TC_013_CS','TC_014_CS','TC_015_CS','TC_016_CS','TC_032_1_CS','TC_032_2_CS','TC_034_CS'];
   document.querySelectorAll('.tc-check').forEach(c=>{c.checked=rebootTests.includes(c.value)});
+  updCount();
+}
+
+/**
+ * Selects only tests that do NOT require the Keysight CDS EV simulator.
+ * Charging, session, reservation, and connector-state tests are excluded.
+ * Everything else (config, data transfer, security, firmware, etc.) is selected.
+ */
+function selNoCds(){
+  document.querySelectorAll('.tc-check').forEach(c=>{
+    c.checked = !needsCds(c.value);
+  });
   updCount();
 }
 function selCore(){
@@ -1543,6 +1617,180 @@ async function uploadExecutionToJira(){
     btn.textContent='Retry Upload';
     addLog({timestamp:new Date().toISOString(),level:'error',message:'Jira upload failed: '+e.message,service:'ui'});
     alert('Upload failed: '+e.message);
+  }
+}
+
+// ── Tab Switching ──
+
+/** Switch between Current Run and Run History tabs */
+function switchTab(tab){
+  document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
+  $(`tab-${tab}`).classList.add('active');
+  $('view-current').style.display=tab==='current'?'flex':'none';
+  $('view-history').style.display=tab==='history'?'flex':'none';
+  if(tab==='history')fetchHistory();
+}
+
+function closeRunDetails(){
+  $('history-details').classList.remove('visible');
+}
+
+// ── Run History ──
+
+async function fetchHistory(){
+  try{
+    const r=await fetch(API+'/api/results/history');
+    const data=await r.json();
+    renderHistoryTable(Array.isArray(data)?data:data.history||[]);
+  }catch(e){
+    $('htbody').innerHTML=`<tr><td colspan="8" style="color:var(--text-dim);text-align:center;padding:16px">Error loading history: ${e.message}</td></tr>`;
+  }
+}
+
+function renderHistoryTable(history){
+  if(!history||!history.length){
+    $('htbody').innerHTML='<tr><td colspan="8" style="color:var(--text-dim);text-align:center;padding:16px">No past runs</td></tr>';
+    return;
+  }
+  $('htbody').innerHTML=history.map((h,i)=>{
+    const d=new Date(h.timestamp);
+    const dateStr=d.toLocaleDateString()+' '+d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+    const rateColor=h.passRate>=80?'var(--pass)':h.passRate>=50?'var(--warn)':'var(--fail)';
+    return `<tr onclick="showRunDetails('${h.id}')">
+      <td style="color:var(--text-dim)">${dateStr}</td>
+      <td style="color:var(--text-bright)">${h.configName||'—'}</td>
+      <td>${h.total}</td>
+      <td style="color:var(--pass)">${h.pass}</td>
+      <td style="color:var(--fail)">${h.fail}</td>
+      <td style="color:var(--inconc)">${h.inconc}</td>
+      <td style="color:${rateColor};font-weight:700">${h.passRate}%</td>
+      <td style="text-align:right;color:var(--accent)">&#9654; View</td>
+    </tr>`;
+  }).join('');
+}
+
+function showRunDetails(id){
+  // Fetch history and find the matching entry
+  fetch(API+'/api/results/history').then(r=>r.json()).then(data=>{
+    const entries=Array.isArray(data)?data:data.history||[];
+    const entry=entries.find((h)=>h.id===id);
+    if(!entry)return;
+    $('history-details').classList.add('visible');
+    const d=new Date(entry.timestamp);
+    $('hd-title').textContent=`Run — ${d.toLocaleDateString()} ${d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})} (${entry.configName||'—'})`;
+
+    // Render individual results table
+    const tbody=entry.results&&entry.results.length
+      ? entry.results.map((r)=>`<tr><td style="color:var(--text-bright)">${r.testCase}</td><td><span class="vb ${r.verdict}">${r.verdict}</span></td><td style="color:var(--text-dim)">${r.duration||0}s</td></tr>`).join('')
+      : '<tr><td colspan="3" style="color:var(--text-dim);text-align:center;padding:12px">No detail results</td></tr>';
+    $('hd-table-wrap').innerHTML=`<table><thead><tr><th>Test Case</th><th>Verdict</th><th>Duration</th></tr></thead><tbody>${tbody}</tbody></table>`;
+
+    // Render charts
+    renderCharts(entry);
+  }).catch(()=>{});
+}
+
+// ── Charts ──
+
+let pieChart=null;
+let barChart=null;
+
+function destroyCharts(){
+  if(pieChart){pieChart.destroy();pieChart=null;}
+  if(barChart){barChart.destroy();barChart=null;}
+}
+
+function renderCharts(entry){
+  destroyCharts();
+
+  const style=getComputedStyle(document.body);
+  const passColor=style.getPropertyValue('--pass').trim();
+  const failColor=style.getPropertyValue('--fail').trim();
+  const inconcColor=style.getPropertyValue('--inconc').trim();
+  const errorColor=style.getPropertyValue('--error').trim();
+  const textColor=style.getPropertyValue('--text').trim();
+  const accentColor=style.getPropertyValue('--accent').trim();
+
+  // Pie chart
+  const pieCtx=document.getElementById('chart-pie')?.getContext('2d');
+  if(pieCtx){
+    pieChart=new Chart(pieCtx,{
+      type:'pie',
+      data:{
+        labels:['PASS','FAIL','INCONC','ERROR'],
+        datasets:[{
+          data:[entry.pass,entry.fail,entry.inconc,entry.error],
+          backgroundColor:[passColor,failColor,inconcColor,errorColor],
+          borderWidth:1,
+          borderColor:style.getPropertyValue('--bg').trim(),
+        }]
+      },
+      options:{
+        responsive:true,
+        maintainAspectRatio:false,
+        plugins:{
+          legend:{position:'bottom',labels:{color:textColor,boxWidth:10,padding:8,font:{size:9}}},
+          tooltip:{enabled:true}
+        }
+      }
+    });
+  }
+
+  // Bar chart — top 15 tests by duration (or all if fewer)
+  const sorted=entry.results?[...entry.results].sort((a,b)=>b.duration-a.duration).slice(0,15):[];
+  if(sorted.length){
+    const barCtx=document.getElementById('chart-bar')?.getContext('2d');
+    if(barCtx){
+      barChart=new Chart(barCtx,{
+        type:'bar',
+        data:{
+          labels:sorted.map((r)=>r.testCase),
+          datasets:[{
+            label:'Duration (s)',
+            data:sorted.map((r)=>r.duration),
+            backgroundColor:sorted.map((r)=>r.verdict==='pass'?passColor:r.verdict==='fail'?failColor:r.verdict==='inconc'?inconcColor:errorColor),
+            borderWidth:0,
+            borderRadius:3,
+          }]
+        },
+        options:{
+          indexAxis:'y',
+          responsive:true,
+          maintainAspectRatio:false,
+          plugins:{
+            legend:{display:false},
+            tooltip:{callbacks:{label:(ctx)=>`${ctx.parsed.x}s: ${sorted[ctx.dataIndex].testCase}`}}
+          },
+          scales:{
+            x:{grid:{color:'color-mix(in srgb,var(--border) 30%,transparent)'},ticks:{color:textColor,font:{size:9}}},
+            y:{grid:{display:false},ticks:{color:textColor,font:{size:8}}}
+          }
+        }
+      });
+    }
+  }
+}
+
+// ── Create Jira Defect ──
+
+async function createDefect(testCase,verdict){
+  if(!confirm(`Create a Jira defect for ${testCase} (${verdict})?`))return;
+  try{
+    const r=await fetch(API+'/api/jira/create-defect',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({testCase,verdict})
+    });
+    const j=await r.json();
+    if(j.ok){
+      addLog({timestamp:new Date().toISOString(),level:'success',message:`Defect created: ${j.issueKey} (${j.url})`,service:'ui'});
+      alert(j.existing ? `Existing defect found: ${j.issueKey}\n${j.url}` : `Defect created: ${j.issueKey}\n${j.url}`);
+    }else{
+      throw new Error(j.error||'Unknown error');
+    }
+  }catch(e){
+    addLog({timestamp:new Date().toISOString(),level:'error',message:`Defect creation failed: ${e.message}`,service:'ui'});
+    alert('Failed to create defect: '+e.message);
   }
 }
 

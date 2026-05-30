@@ -161,4 +161,18 @@ router.get("/details", (_req, res) => {
     res.json(testDescriptions);
 });
 
+/**
+ * Returns all test cases as an array of { id, description, suite } objects.
+ * Used by the defect creation route to enrich defect descriptions.
+ */
+export function getAllTestCases(): Array<{ id: string; description: string; suite: string }> {
+    const result: Array<{ id: string; description: string; suite: string }> = [];
+    for (const [suite, tests] of Object.entries(testSuites)) {
+        for (const id of tests) {
+            result.push({ id, description: testDescriptions[id] || "", suite });
+        }
+    }
+    return result;
+}
+
 export default router;
