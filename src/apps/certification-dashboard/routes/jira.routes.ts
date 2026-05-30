@@ -7,7 +7,7 @@ import { JiraClient } from "../../../connectors/jira/index.js";
 import { log } from "./logs.routes.js";
 import { setService } from "../services/service-state.service.js";
 import { effectiveConfig } from "../config/dashboard.config.js";
-import { getLastResults } from "../services/pipeline.service.js";
+import { annotateLatestRun, getLastResults } from "../services/pipeline.service.js";
 import { validate } from "../middleware/validate.js";
 import { jiraUploadSchema } from "../schemas/api.schemas.js";
 
@@ -67,6 +67,16 @@ router.post("/upload-execution", validate(jiraUploadSchema), async (req, res) =>
             labels: ["ocpp", "certification", "test-execution"],
         });
 
+        annotateLatestRun({
+            sut,
+            firmwareVersion,
+            testPlan,
+            environment,
+            jiraIssueKey: issue.key,
+            source: "jira-upload",
+        });
+
+        log("info", `Execution metadata: SUT=${sut} FW=${firmwareVersion} ENV=${environment || "Lab"} PLAN=${testPlan || "N/A"}`, "jira");
         log("info", `Created Test Execution ${issue.key}`, "jira");
         res.json({ ok: true, issueKey: issue.key, url: `${effectiveConfig.jira.baseUrl}/browse/${issue.key}` });
     } catch (e: any) {

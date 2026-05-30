@@ -20,6 +20,7 @@ export interface SavedConfig {
     octtRole: string;
     cdsIp: string;
     cdsPort: number;
+    cdsSink: number;
     jiraBaseUrl: string;
     jiraEmail: string;
     jiraApiToken: string;
@@ -33,6 +34,7 @@ const defaultConfig: SavedConfig = {
     octtRole: "CS",
     cdsIp: "192.168.100.10",
     cdsPort: 51001,
+    cdsSink: 12,
     jiraBaseUrl: "",
     jiraEmail: "",
     jiraApiToken: "",
@@ -73,6 +75,7 @@ export function buildEffectiveConfig(saved: SavedConfig) {
         cds: {
             ip: saved.cdsIp || process.env.CDS_IP || "192.168.100.10",
             port: saved.cdsPort || parseInt(process.env.CDS_PORT ?? "51001", 10),
+            sink: saved.cdsSink || parseInt(process.env.CDS_SINK_ID ?? "12", 10),
         },
         jira: {
             baseUrl: saved.jiraBaseUrl || process.env.JIRA_BASE_URL || "",

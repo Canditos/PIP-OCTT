@@ -3,6 +3,7 @@
 // ══════════════════════════════════════════════════════════════
 
 import { broadcast } from "./sse.service.js";
+import { wsBroadcast } from "./websocket.service.js";
 
 export interface ServiceState {
     status: "disconnected" | "connecting" | "connected" | "running" | "error";
@@ -21,7 +22,10 @@ export function setService(service: string, status: ServiceState["status"], info
     if (!s) return;
     s.status = status;
     if (info) s.info = info;
-    broadcast("status", { service, status, info: s.info });
+    // Broadcast to both SSE and WebSocket
+    const payload = { service, status, info: s.info };
+    broadcast("status", payload);
+    wsBroadcast("status", payload);
 }
 
 export function getService(service: string): ServiceState | undefined {

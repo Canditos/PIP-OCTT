@@ -20,6 +20,8 @@ export function validate(schema: ZodSchema) {
             next();
         } catch (err) {
             if (err instanceof ZodError) {
+                // Log only field names and errors, not values (may contain secrets)
+                console.log(`[validate] ${req.path}: ${err.errors.map(e => e.path.join(".") || "root").join(", ")}`);
                 res.status(400).json({
                     ok: false,
                     error: "Validation failed",

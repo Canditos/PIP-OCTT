@@ -9,26 +9,33 @@
 import express from "express";
 import cors from "cors";
 import path from "path";
+import http from "http";
 import { fileURLToPath } from "url";
+import swaggerUi from "swagger-ui-express";
 
 // Config
 import { effectiveConfig } from "./config/dashboard.config.js";
+import { swaggerSpec } from "./config/swagger.config.js";
 
 // Services
 import { addClient, removeClient } from "./services/sse.service.js";
+import { initWebSocket, wsBroadcast } from "./services/websocket.service.js";
 import { getAllServices } from "./services/service-state.service.js";
 import { log } from "./routes/logs.routes.js";
 
 // Middleware
 import { errorHandler, notFoundHandler } from "./middleware/error-handler.js";
 import { rateLimiter } from "./middleware/rate-limiter.js";
+import httpLogger from "./middleware/http-logger.js";
 
 // Routes
 import statusRoutes from "./routes/status.routes.js";
 import logsRoutes from "./routes/logs.routes.js";
+import healthRoutes from "./routes/health.routes.js";
 import cdsRoutes from "./routes/cds.routes.js";
 import octtRoutes from "./routes/octt.routes.js";
 import pipelineRoutes from "./routes/pipeline.routes.js";
+import pipelineConfigRoutes from "./routes/pipeline-config.routes.js";
 import jiraRoutes from "./routes/jira.routes.js";
 import docsRoutes from "./routes/docs.routes.js";
 import relayRoutes from "./routes/relay.routes.js";
@@ -45,14 +52,24 @@ const PORT = parseInt(process.env.CERT_DASHBOARD_PORT ?? "3101", 10);
 // ── Middleware ──
 app.use(cors());
 app.use(express.json());
+app.use(httpLogger);
 app.use(rateLimiter);
 
+// ── API Documentation ──
+app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
+    customCss: ".swagger-ui .topbar { display: none }",
+    customSiteTitle: "OCPP Certification Dashboard API",
+}));
+app.get("/api-docs.json", (_req, res) => res.json(swaggerSpec));
+
 // ── API Routes ──
+app.use("/api/health", healthRoutes);
 app.use("/api/status", statusRoutes);
 app.use("/api/logs", logsRoutes);
 app.use("/api/cds", cdsRoutes);
 app.use("/api/octt", octtRoutes);
 app.use("/api/pipeline", pipelineRoutes);
+app.use("/api/pipeline-config", pipelineConfigRoutes);
 app.use("/api/jira", jiraRoutes);
 app.use("/api/docs", docsRoutes);
 app.use("/api", relayRoutes);
@@ -85,14 +102,25 @@ app.get("/api/events", (req, res) => {
 });
 
 // ── Static Files ──
-app.use(express.static(path.join(__dirname, "public")));
+// Use source public folder since tsc doesn't copy static assets
+const publicPath = path.resolve(__dirname, "../../../src/apps/certification-dashboard/public");
+app.use(express.static(publicPath));
+
+// Fallback to index.html for SPA routing
+app.get("/", (_req, res) => {
+    res.sendFile(path.join(publicPath, "index.html"));
+});
 
 // ── Error Handling (must be last) ──
 app.use(notFoundHandler);
 app.use(errorHandler);
 
+// ── Create HTTP Server & Initialize WebSocket ──
+const server = http.createServer(app);
+initWebSocket(server);
+
 // ── Start ──
-app.listen(PORT, async () => {
+server.listen(PORT, async () => {
     console.log(`[Cert Dashboard] http://localhost:${PORT}`);
     log("info", `Dashboard started on port ${PORT}`, "dashboard");
 
@@ -142,8 +170,20 @@ app.listen(PORT, async () => {
             setService("jira", "error", e.message?.slice(0, 60) || "Connection failed");
         }
     }
+
+    // Start periodic health checks for auto-reconnect
+    const { startHealthChecks } = await import("./services/health-check.service.js");
+    startHealthChecks();
 });
 
 // ── Graceful Shutdown ──
-process.on("SIGINT", () => process.exit(0));
-process.on("SIGTERM", () => process.exit(0));
+process.on("SIGINT", async () => {
+    const { stopHealthChecks } = await import("./services/health-check.service.js");
+    stopHealthChecks();
+    process.exit(0);
+});
+process.on("SIGTERM", async () => {
+    const { stopHealthChecks } = await import("./services/health-check.service.js");
+    stopHealthChecks();
+    process.exit(0);
+});

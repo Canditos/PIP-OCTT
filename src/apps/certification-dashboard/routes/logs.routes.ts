@@ -4,6 +4,7 @@
 
 import { Router } from "express";
 import { broadcast } from "../services/sse.service.js";
+import { wsBroadcast } from "../services/websocket.service.js";
 
 const router = Router();
 
@@ -13,7 +14,9 @@ const MAX_LOGS = 1000;
 export function log(level: string, message: string, service?: string): void {
     const entry = { timestamp: new Date().toISOString(), level, message, service: service ?? "dashboard" };
     console.log(`[${entry.timestamp}] [${entry.service}] ${message}`);
+    // Broadcast to both SSE and WebSocket for compatibility
     broadcast("log", entry);
+    wsBroadcast("log", entry);
     logBuffer.push(entry);
     if (logBuffer.length > MAX_LOGS) logBuffer.shift();
 }

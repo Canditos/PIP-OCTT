@@ -27,7 +27,7 @@ router.post("/check", validate(octtCheckSchema), async (req, res) => {
     }
 });
 
-router.post("/check-config", async (req, res) => {
+router.post("/check-config", validate(octtCheckConfigSchema), async (req, res) => {
     const { configurationName, baseUrl, token } = req.body;
     try {
         const cfg = { ...effectiveConfig.octt, ...(baseUrl ? { baseUrl } : {}), ...(token ? { token } : {}) };

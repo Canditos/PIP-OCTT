@@ -1,0 +1,39 @@
+{
+  "rebootTests": [
+    "TC_001_CS",
+    "TC_002_CS",
+    "TC_013_CS",
+    "TC_014_CS",
+    "TC_015_CS",
+    "TC_016_CS",
+    "TC_032_1_CS",
+    "TC_032_2_CS",
+    "TC_034_CS"
+  ],
+  "chargingTests": [
+    "TC_017_CS", "TC_018_CS", "TC_019_CS", "TC_020_CS", "TC_021_CS", "TC_022_CS",
+    "TC_023_CS", "TC_024_1_CS", "TC_024_2_CS", "TC_025_CS",
+    "TC_026_CS", "TC_027_CS", "TC_028_CS", "TC_029_CS", "TC_030_CS", "TC_031_CS",
+    "TC_035_CS", "TC_036_CS", "TC_037_CS",
+    "TC_038_CS", "TC_039_CS", "TC_040_CS", "TC_041_CS",
+    "TC_042_CS", "TC_043_CS", "TC_044_CS", "TC_045_CS", "TC_046_CS",
+    "TC_047_CS", "TC_048_CS", "TC_049_CS", "TC_050_CS", "TC_051_CS", "TC_052_CS",
+    "TC_053_1_CS", "TC_053_2_CS", "TC_054_CS", "TC_055_CS",
+    "TC_056_CS", "TC_057_CS", "TC_058_1_CS", "TC_058_2_CS", "TC_059_CS", "TC_060_CS",
+    "TC_066_CS", "TC_067_CS", "TC_072_CS", "TC_082_CS"
+  ],
+  "cdsResetBeforeCharging": true,
+  "cdsResetTimeoutMs": 15000,
+  "timeouts": {
+    "default": {
+      "maxTimeoutPeriod": 70,
+      "longOperationTimeout": 450,
+      "maxTimeDeviation": 4
+    },
+    "reboot": {
+      "maxTimeoutPeriod": 600,
+      "longOperationTimeout": 650,
+      "maxTimeDeviation": 4
+    }
+  }
+}
