@@ -23,7 +23,7 @@ const CONFIG = {
     /** Base URL of the certification dashboard server */
     dashboardUrl: 'http://127.0.0.1:3101/api',
     /** OCTT API base URL (constructed from OCTT_BASE_URL env var) */
-    octtBaseUrl: process.env.OCTT_BASE_URL ? `${process.env.OCTT_BASE_URL}/api/v1` : '',
+    octtBaseUrl: process.env.OCTT_BASE_URL ? `${process.env.OCTT_BASE_URL.replace(/\/+$/, '')}/api/v1` : '',
     /** Bearer token for OCTT API authentication */
     octtToken: process.env.OCTT_TOKEN ?? '',
     /** IP address of the Keysight CDS hardware */
