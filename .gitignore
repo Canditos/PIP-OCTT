@@ -7,3 +7,6 @@ reports/
 test-results/
 .DS_Store
 certification-dashboard.zip
+scratch/
+probe.mjs
+*.log
