@@ -127,7 +127,6 @@ server.listen(PORT, async () => {
     // Auto-check services on startup
     const { setService } = await import("./services/service-state.service.js");
     const { OcttClient } = await import("../../connectors/octt/index.js");
-    const { CdsClient } = await import("../../connectors/cds/index.js");
 
     // Check OCTT
     if (effectiveConfig.octt.baseUrl && effectiveConfig.octt.token) {
@@ -141,19 +140,21 @@ server.listen(PORT, async () => {
         }
     }
 
-    // Check CDS
+    // Check CDS + establish persistent relay connection
     try {
         setService("cds", "connecting");
-        const cds = new CdsClient(effectiveConfig.cds.ip, effectiveConfig.cds.port);
-        const ok = await cds.connect();
-        if (ok) {
+        const { getCds } = await import("./routes/relay.routes.js");
+        const cds = await getCds(effectiveConfig.cds.ip, effectiveConfig.cds.port || 51001);
+        if (cds?.isConnected) {
             setService("cds", "connected", `${effectiveConfig.cds.ip}:${effectiveConfig.cds.port}`);
-            await cds.disconnect();
+            setService("relay", "connected", `${effectiveConfig.cds.ip}:${effectiveConfig.cds.port}`);
         } else {
             setService("cds", "error", "Connection failed");
+            setService("relay", "error", "Connection failed");
         }
     } catch (e: any) {
         setService("cds", "error", e.message?.slice(0, 60) || "Connection failed");
+        setService("relay", "error", e.message?.slice(0, 60) || "Connection failed");
     }
 
     // Check Jira

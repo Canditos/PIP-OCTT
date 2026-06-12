@@ -30,8 +30,8 @@ const CONFIG = {
     cdsIp: process.env.CDS_IP ?? '192.168.100.10',
     /** TCP port for the CDS SLEP protocol */
     cdsPort: parseInt(process.env.CDS_PORT ?? '51001', 10),
-    /** Sink identifier used by the CDS (typically 12) */
-    sinkId: 12,
+    /** Sink identifier used by the CDS (typically 1) */
+    sinkId: parseInt(process.env.CDS_SINK ?? '1', 10),
     /** OCTT configuration/profile name to use for the session */
     configurationName: process.env.OCTT_CONFIG ?? 'AUT_SID_SAT',
     /** OCPP version under test (ocpp1.6 or ocpp2.0.1) */
@@ -106,61 +106,6 @@ const testSuites: Record<string, string[]> = {
 /** Tests that involve a charge point reboot and need extra recovery time */
 const REBOOT_TESTS = ['TC_001_CS', 'TC_002_CS', 'TC_013_CS', 'TC_014_CS', 'TC_015_CS', 'TC_016_CS', 'TC_032_1_CS', 'TC_032_2_CS', 'TC_034_CS'];
 
-/** Suites that involve physical charging state and need CDS reset between tests */
-const chargingSuites = ['StartSession', 'StopSession', 'Cache', 'RemoteActions', 'Resetting', 'Unlocking', 'SmartCharging', 'Reservation', 'LocalAuthList', 'OfflineBehavior'];
-
-/**
- * Determines whether a CDS reset is required before/after a given test.
- * Charging-related suites and connector-lock tests leave the CDS in
- * a non-idle state, so resetting prevents state leakage between tests.
- *
- * @param suite  - Functional suite name
- * @param testId - Test case identifier
- * @returns true if the CDS should be reset for this test
- */
-function needsCdsReset(suite: string, testId: string): boolean {
-    if (chargingSuites.includes(suite)) return true;
-    return false;
-}
-
-/**
- * Performs a full CDS reset cycle through the dashboard API:
- * stop → wait → reset → wait → start.
- * This is called between tests to ensure a clean EV state.
- *
- * If any step fails, retries once after a short delay. If both attempts
- * fail, logs the error but does NOT abort the certification run.
- *
- * @param request - Playwright APIRequestContext
- */
-async function resetCdsBetweenTests(request: any) {
-    console.log('[CDS] Reset between tests...');
-
-    async function attemptReset(): Promise<boolean> {
-        try {
-            await request.post(`${CONFIG.dashboardUrl}/i/${cdsId}/stop`);
-            await new Promise((resolve) => setTimeout(resolve, 2000));
-            await request.post(`${CONFIG.dashboardUrl}/i/${cdsId}/reset`);
-            await new Promise((resolve) => setTimeout(resolve, 3000));
-            await request.post(`${CONFIG.dashboardUrl}/i/${cdsId}/start`);
-            console.log('[CDS] Reset complete, simulation restarted');
-            return true;
-        } catch {
-            return false;
-        }
-    }
-
-    const ok = await attemptReset();
-    if (!ok) {
-        console.warn('[CDS] First reset attempt failed, retrying in 5s...');
-        await new Promise((resolve) => setTimeout(resolve, 5000));
-        const ok2 = await attemptReset();
-        if (!ok2) {
-            console.error('[CDS] Reset failed twice — continuing anyway. Next test may be unstable.');
-        }
-    }
-}
-
 /** Accumulated results for the final summary report */
 const results: { suite: string; testCase: string; verdict: string; duration: number }[] = [];
 
@@ -174,26 +119,35 @@ test.describe.configure({ mode: 'serial' });
 test.setTimeout(900_000);
 
 // ══════════════════════════════════════════════════════════════
-// PHASE 0: Lab Setup
-// Configure the CDS EV simulator before any OCTT tests run.
+// PHASE 0: CDS Lab Setup
+// Correct order: reset → validate → configure → start
+// DO NOT reset after configure — reset clears EV PIDs!
 // ══════════════════════════════════════════════════════════════
 
-test('0a. Register CDS instance in dashboard', async ({ request }) => {
-    const resp = await request.post(`${CONFIG.dashboardUrl}/instances`, {
-        data: { id: cdsId, ip: CONFIG.cdsIp, port: CONFIG.cdsPort },
-    });
-    expect(resp.status()).toBe(200);
+test('0a. Reset CDS to known idle state', async ({ request }) => {
+    const resp = await request.post(`${CONFIG.dashboardUrl}/i/${cdsId}/reset`);
+    const body = await resp.json();
+    expect(body.ok).toBeTruthy();
+    console.log('[CDS] Reset complete — CDS in Stopped state');
 });
 
-test('0b. Configure CDS (ISO 15118, DC, sink)', async ({ request }) => {
+test('0b. Validate CDS (no errors, healthy state)', async ({ request }) => {
+    const resp = await request.post(`${CONFIG.dashboardUrl}/i/${cdsId}/validate`);
+    const body = await resp.json();
+    console.log(`[CDS] Validate: healthy=${body.healthy} status=${body.status} errors=${body.errors}`);
+    expect(body.healthy).toBeTruthy();
+});
+
+test('0c. Configure CDS (ISO 15118, DC, sink)', async ({ request }) => {
     const resp = await request.post(`${CONFIG.dashboardUrl}/i/${cdsId}/configure-cds`, {
         data: { specification: 3, chargeMode: 2, sinkId: CONFIG.sinkId, mode: 2 },
     });
     const body = await resp.json();
     expect(body.ok).toBeTruthy();
+    console.log('[CDS] Configured: ISO 15118, DC mode, sink=' + CONFIG.sinkId);
 });
 
-test('0c. Configure EV parameters (900V, 300A, 50kW)', async ({ request }) => {
+test('0d. Configure EV parameters (900V, 300A, 50kW)', async ({ request }) => {
     const resp = await request.post(`${CONFIG.dashboardUrl}/i/${cdsId}/configure-ev`, {
         data: {
             EVMaximumVoltageLimit: 900,
@@ -207,13 +161,15 @@ test('0c. Configure EV parameters (900V, 300A, 50kW)', async ({ request }) => {
     });
     const body = await resp.json();
     expect(body.ok).toBeTruthy();
+    console.log('[CDS] EV configured: 900V max, 300A max, 50kW, SoC 20%');
 });
 
-test('0d. Reset + Start CDS', async ({ request }) => {
-    await request.post(`${CONFIG.dashboardUrl}/i/${cdsId}/reset`);
-    await new Promise((resolve) => setTimeout(resolve, 3000));
-    await request.post(`${CONFIG.dashboardUrl}/i/${cdsId}/start`);
-    console.log('[CDS] EV simulation started');
+test('0e. Start CDS simulation', async ({ request }) => {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    const resp = await request.post(`${CONFIG.dashboardUrl}/i/${cdsId}/start`);
+    const body = await resp.json();
+    expect(body.ok).toBeTruthy();
+    console.log('[CDS] EV simulation started — ready for charging tests');
 });
 
 // ══════════════════════════════════════════════════════════════
@@ -367,14 +323,6 @@ Object.entries(testSuites).forEach(([suiteName, tests]) => {
                     }
                 }
 
-                // ── CDS reset between tests ──
-                // Always attempt reset, even if the test errored, to leave
-                // the hardware in a known idle state for the next test.
-                if (!testId.startsWith('tc_bi_') && needsCdsReset(suiteName, testId)) {
-                    console.log('[CDS] Resetting before next test...');
-                    await resetCdsBetweenTests(request);
-                }
-
                 // Brief pause between tests to let the SUT settle after heavy operations
                 await new Promise((resolve) => setTimeout(resolve, 1000));
             });
@@ -425,13 +373,15 @@ test.afterAll(async ({ request }) => {
         }
     }
 
-    // Cleanup CDS: stop simulation and reset to idle
+    // Cleanup CDS: stop → reset → restore safe defaults
     console.log('\n🛡️ CDS Cleanup...');
     try {
         await request.post(`${CONFIG.dashboardUrl}/i/${cdsId}/stop`);
         await new Promise((resolve) => setTimeout(resolve, 2000));
         await request.post(`${CONFIG.dashboardUrl}/i/${cdsId}/reset`);
-        console.log('[CDS] Stop and reset complete');
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        await request.post(`${CONFIG.dashboardUrl}/i/${cdsId}/defaults`);
+        console.log('[CDS] Stopped, reset, safe defaults restored');
     } catch {
         console.log('[CDS] Cleanup error (non-fatal)');
     }

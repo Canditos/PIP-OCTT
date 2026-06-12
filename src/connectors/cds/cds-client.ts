@@ -45,7 +45,7 @@ export class CdsClient {
     /** RxJS subject that emits every raw TCP response buffer */
     public readonly responseData = new ReplaySubject<Buffer>(1);
     /** Reactive current status value (bitmask) polled from the CDS */
-    public readonly statusValue = new BehaviorSubject<number>(0);
+    public readonly statusValue = new BehaviorSubject<number>(-1);
     /** When true, logs every status change to the console */
     public statusLogging = false;
     /** True while the TCP socket is connected */
@@ -76,7 +76,15 @@ export class CdsClient {
      * @returns true on successful connection, false on failure
      */
     async connect(): Promise<boolean> {
-        if (this.isConnected) return true;
+        // Detect stale connections: isConnected is true but socket is actually dead
+        if (this.isConnected) {
+            if (this.socket.destroyed) {
+                this.isConnected = false;
+                this.socket = new Socket();
+            } else {
+                return true;
+            }
+        }
 
         return new Promise<boolean>((resolve) => {
             this.socket.connect(this.port, this.ip, () => {
@@ -123,16 +131,21 @@ export class CdsClient {
 
     /**
      * Closes the TCP connection and tears down subscriptions.
+     * Safe to call multiple times; no-ops if already disconnected.
      *
      * @returns true when the socket closes
      */
     async disconnect(): Promise<boolean> {
+        if (!this.isConnected && this.socket.destroyed) return true;
         return new Promise((resolve) => {
-            this.socket.on("close", () => resolve(true));
-            this.socket.on("end", () => resolve(true));
+            const onClose = () => { this.isConnected = false; resolve(true); };
+            if (this.socket.destroyed) { onClose(); return; }
+            this.socket.once("close", onClose);
+            this.socket.once("error", () => {});
             this.disconnect$.next();
+            this.statusPollingSubscription?.unsubscribe();
+            this.statusSubscription?.unsubscribe();
             this.socket.destroy();
-            this.isConnected = false;
         });
     }
 
@@ -172,6 +185,34 @@ export class CdsClient {
         if (dataType === "int32") valueBuffer.writeInt32LE(value, 0);
         else valueBuffer.writeFloatLE(value, 0);
         this.sendCommand(Buffer.concat([header, pidBuffer, reservedAndType, valueBuffer]));
+    }
+
+    /**
+     * Sends a SET request for a single PID and waits for the SET_RESPONSE.
+     * Prevents race conditions during rapid state transitions (like reset).
+     */
+    async writeSinglePidAsync(pid: number, dataType: DataType, value: number, timeoutMs = 2000): Promise<boolean> {
+        return new Promise((resolve) => {
+            let subscription: Subscription;
+            const timer = setTimeout(() => { subscription?.unsubscribe(); resolve(false); }, timeoutMs);
+
+            subscription = this.responseData
+                .pipe(filter((data: Buffer) => data.length === 12))
+                .subscribe((data: Buffer) => {
+                    try {
+                        const response = this.parseSinglePidResponse(data);
+                        if (response.pid === pid) {
+                            clearTimeout(timer);
+                            subscription.unsubscribe();
+                            resolve(response.parafault === 0);
+                        }
+                    } catch {
+                        // ignore parse errors for unrelated packets
+                    }
+                });
+
+            this.writeSinglePid(pid, dataType, value);
+        });
     }
 
     /**
@@ -296,6 +337,7 @@ export class CdsClient {
 
     /**
      * Waits until the CDS status equals the target value.
+     * Skips the initial placeholder value (-1) to avoid false matches.
      *
      * @param target    - Desired status bitmask value
      * @param timeoutMs - Maximum wait time
@@ -304,7 +346,7 @@ export class CdsClient {
     async waitForStatus(target: number, timeoutMs = 5000): Promise<boolean> {
         return firstValueFrom(
             this.statusValue.pipe(
-                filter((status) => status === target),
+                filter((status) => status !== -1 && status === target),
                 timeout(timeoutMs),
                 map(() => true),
                 catchError(() => of(false))
@@ -314,6 +356,7 @@ export class CdsClient {
 
     /**
      * Waits until at least one bit in the given bitmask is set in the status.
+     * Skips the initial placeholder value (-1).
      *
      * @param bitMask   - Bitmask to test (e.g., CdsStatus.Running)
      * @param timeoutMs - Maximum wait time
@@ -322,7 +365,7 @@ export class CdsClient {
     async waitForStatusBit(bitMask: number, timeoutMs = 5000): Promise<boolean> {
         return firstValueFrom(
             this.statusValue.pipe(
-                filter((status) => (status & bitMask) !== 0),
+                filter((status) => status !== -1 && (status & bitMask) !== 0),
                 timeout(timeoutMs),
                 map(() => true),
                 catchError(() => of(false))
@@ -365,34 +408,34 @@ export class CdsClient {
 
     /**
      * Performs a full CDS reset cycle:
-     *   1. Stop if running
-     *   2. Send Reset command
-     *   3. Wait for Stopped → Initializing → Stopped
+     *   1. Stop if running or in error state
+     *   2. Send Initializing command to trigger reset sequence
+     *   3. Wait for Resetting state
+     *   4. Wait for Stopped state
      *
-     * This returns the CDS to a known idle state.
+     * This returns the CDS to a known idle state ready for start().
      *
      * @returns true if the reset completed successfully
      */
     async reset(): Promise<boolean> {
         try {
-            // If not already stopped or in error, send Stop and wait
-            if (!(await this.waitForStatus(CdsStatus.Stopped, 2000)) && !(await this.waitForStatus(CdsStatus.ErrorPending, 2000))) {
+            // Step 1: Ensure the CDS is stopped (send Stop if needed)
+            if (!(await this.waitForStatus(CdsStatus.Stopped, 2000))
+                && !(await this.waitForStatus(CdsStatus.ErrorPending, 2000))) {
                 this.writeSinglePid(PidList.Control, "int32", CdsControl.Stop);
-                await this.waitForStatus(CdsStatus.Stopped, 20000);
+                const stopped = await this.waitForStatus(CdsStatus.Stopped, 20000);
+                if (!stopped) return false;
             }
 
-            // Wait for the Control SET_RESPONSE, then send Reset
-            const subscription = this.responseData.pipe(filter((data: Buffer) => data.length === 12)).subscribe((data) => {
-                const response = this.parseSinglePidResponse(data);
-                if (response.pid === PidList.Control) {
-                    this.writeSinglePid(PidList.Control, "int32", CdsControl.Reset);
-                    subscription.unsubscribe();
-                }
-            });
-
-            await this.waitForStatusBit(CdsStatus.Stopped, 500);
+            // Step 2: Trigger the reset cycle — Initializing causes the CDS
+            // to transition through Resetting and back to Stopped automatically
             this.writeSinglePid(PidList.Control, "int32", CdsControl.Initializing);
-            await this.waitForStatusBit(CdsStatus.Resetting, 2000);
+
+            // Step 3: Wait for the Resetting state to confirm the cycle started
+            const resetting = await this.waitForStatusBit(CdsStatus.Resetting, 3000);
+            if (!resetting) return false;
+
+            // Step 4: Wait for the cycle to complete (back to Stopped)
             return await this.waitForStatus(CdsStatus.Stopped, 15000);
         } catch {
             return false;
@@ -405,7 +448,8 @@ export class CdsClient {
      * @returns true if Running status is reached within 5s
      */
     async start(): Promise<boolean> {
-        this.writeSinglePid(PidList.Control, "int32", CdsControl.Start);
+        const written = await this.writeSinglePidAsync(PidList.Control, "int32", CdsControl.Start);
+        if (!written) return false;
         return this.waitForStatus(CdsStatus.Running, 5000);
     }
 
@@ -415,7 +459,8 @@ export class CdsClient {
      * @returns true if Stopped status is reached within 20s
      */
     async stop(): Promise<boolean> {
-        this.writeSinglePid(PidList.Control, "int32", CdsControl.Stop);
+        const written = await this.writeSinglePidAsync(PidList.Control, "int32", CdsControl.Stop);
+        if (!written) return false;
         return this.waitForStatus(CdsStatus.Stopped, 20000);
     }
 

@@ -20,6 +20,7 @@ describe("Service State", () => {
         vi.clearAllMocks();
         // Reset to default states
         setService("cds", "disconnected", "Keysight SL1040A");
+        setService("relay", "disconnected", "CDS TCP Proxy");
         setService("octt", "disconnected", "Compliance Testing Tool");
         setService("jira", "disconnected", "Issue Tracking");
         vi.clearAllMocks(); // Clear broadcasts from setup
@@ -50,7 +51,7 @@ describe("Service State", () => {
 
     it("should return all services", () => {
         const all = getAllServices();
-        expect(Object.keys(all)).toEqual(["cds", "octt", "jira"]);
+        expect(Object.keys(all)).toEqual(["cds", "octt", "jira", "relay"]);
     });
 
     it("should ignore unknown services", () => {

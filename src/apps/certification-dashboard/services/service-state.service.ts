@@ -1,5 +1,5 @@
 // ══════════════════════════════════════════════════════════════
-// Service State — Tracks CDS, OCTT, Jira connection status
+// Service State — Tracks CDS, Relay, OCTT, Jira connection status
 // ══════════════════════════════════════════════════════════════
 
 import { broadcast } from "./sse.service.js";
@@ -15,6 +15,7 @@ const states = new Map<string, ServiceState>([
     ["cds",  { status: "disconnected", label: "CDS",  info: "Keysight SL1040A" }],
     ["octt", { status: "disconnected", label: "OCTT", info: "Compliance Testing Tool" }],
     ["jira", { status: "disconnected", label: "Jira", info: "Issue Tracking" }],
+    ["relay", { status: "disconnected", label: "Relay", info: "CDS TCP Proxy" }],
 ]);
 
 export function setService(service: string, status: ServiceState["status"], info?: string): void {
