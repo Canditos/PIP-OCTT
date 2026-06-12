@@ -117,6 +117,12 @@
   .sidebar-tab{flex:1;padding:6px 8px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--text-dim);font-family:var(--ui);font-size:10px;font-weight:600;cursor:pointer;text-align:center;transition:.15s}
   .sidebar-tab:hover{border-color:var(--accent);color:var(--text)}
   .sidebar-tab.active{background:var(--accent);border-color:var(--accent);color:#fff}
+  .config-section .card-body{max-height:0;overflow:hidden;transition:max-height .3s ease}
+  .config-section:hover .card-body{max-height:800px}
+  .config-section .card-title{cursor:pointer;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:11px;font-weight:600;color:var(--text-bright);display:flex;align-items:center;justify-content:space-between;transition:.15s}
+  .config-section .card-title:hover{border-color:var(--accent);color:var(--accent)}
+  .config-section .card-title::after{content:'▼';font-size:8px;color:var(--text-dim);transition:transform .2s}
+  .config-section:hover .card-title::after{transform:rotate(180deg)}
   main{flex:1;display:flex;flex-direction:column;overflow:hidden}
   .banner{padding:6px 16px;font-size:11px;font-weight:600;display:none;align-items:center;gap:8px}
   .banner.active{display:flex}.banner.running{background:color-mix(in srgb,var(--accent) 12%,transparent);color:var(--accent)}.banner.done{background:color-mix(in srgb,var(--pass) 12%,transparent);color:var(--pass)}.banner.error{background:color-mix(in srgb,var(--danger) 12%,transparent);color:var(--danger)}
@@ -244,35 +250,50 @@
   <!-- CONFIG tab -->
   <div id="sidebar-config" style="display:flex;flex-direction:column;gap:10px">
     <!-- OCTT configuration -->
-    <div><div class="stitle">OCTT</div><div class="card">
-      <label class="f">API URL</label><input type="text" id="inp-octt-url" placeholder="https://<instance>.octt.openchargealliance.org">
-      <label class="f">Token</label><input type="password" id="inp-octt-token" placeholder="OCTT API token">
-      <label class="f">Configuration</label><input type="text" id="inp-config" value="AUT_SID_SAT">
-      <label class="f">OCPP</label><select id="sel-ver"><option value="ocpp1.6" selected>1.6</option><option value="ocpp2.0.1">2.0.1</option></select>
-      <div style="margin-top:6px;display:flex;gap:4px"><button onclick="checkOcttConfig()" class="sm" style="flex:1">Verify Config</button><button onclick="saveConfig()" class="sm primary" style="flex:1">&#128190; Save</button></div>
-      <div id="octt-cfg-r" style="margin-top:4px;font-size:9px;font-family:var(--font);color:var(--text-dim);display:none"></div>
-    </div></div>
+    <div class="config-section">
+      <div class="card-title">&#9889; OCTT</div>
+      <div class="card-body">
+        <div class="card">
+          <label class="f">API URL</label><input type="text" id="inp-octt-url" placeholder="https://<instance>.octt.openchargealliance.org">
+          <label class="f">Token</label><input type="password" id="inp-octt-token" placeholder="OCTT API token">
+          <label class="f">Configuration</label><input type="text" id="inp-config" value="AUT_SID_SAT">
+          <label class="f">OCPP</label><select id="sel-ver"><option value="ocpp1.6" selected>1.6</option><option value="ocpp2.0.1">2.0.1</option></select>
+          <div style="margin-top:6px;display:flex;gap:4px"><button onclick="checkOcttConfig()" class="sm" style="flex:1">Verify Config</button><button onclick="saveConfig()" class="sm primary" style="flex:1">&#128190; Save</button></div>
+          <div id="octt-cfg-r" style="margin-top:4px;font-size:9px;font-family:var(--font);color:var(--text-dim);display:none"></div>
+        </div>
+      </div>
+    </div>
 
     <!-- CDS configuration -->
-    <div><div class="stitle">CDS</div><div class="card">
-      <label class="f">IP</label><input type="text" id="inp-cds" placeholder="192.168.100.10">
-      <label class="f">Port</label><input type="number" id="inp-cds-port" placeholder="51001">
-      <label class="f">Sink</label><input type="number" id="inp-sink" value="1">
-      <label class="f">Profile</label><select id="sel-profile"><option value="CCS_900V_300A">CCS 900V/300A/50kW ISO15118</option><option value="CCS_500V_125A">CCS 500V/125A/25kW</option><option value="CCS_1000V_400A">CCS 1000V/400A/150kW</option><option value="CCS_DIN_500V_125A">DIN70121 500V/125A/50kW</option></select>
-      <button onclick="openCdsCharts()" style="width:100%;margin-top:8px;border-color:var(--accent);color:var(--accent)">&#128200; Live Charts</button>
-    </div></div>
+    <div class="config-section">
+      <div class="card-title">&#128268; CDS</div>
+      <div class="card-body">
+        <div class="card">
+          <label class="f">IP</label><input type="text" id="inp-cds" placeholder="192.168.100.10">
+          <label class="f">Port</label><input type="number" id="inp-cds-port" placeholder="51001">
+          <label class="f">Sink</label><input type="number" id="inp-sink" value="1">
+          <label class="f">Profile</label><select id="sel-profile"><option value="CCS_900V_300A">CCS 900V/300A/50kW ISO15118</option><option value="CCS_500V_125A">CCS 500V/125A/25kW</option><option value="CCS_1000V_400A">CCS 1000V/400A/150kW</option><option value="CCS_DIN_500V_125A">DIN70121 500V/125A/50kW</option></select>
+          <button onclick="openCdsCharts()" style="width:100%;margin-top:8px;border-color:var(--accent);color:var(--accent)">&#128200; Live Charts</button>
+        </div>
+      </div>
+    </div>
 
     <!-- Jira configuration -->
-    <div><div class="stitle">Jira</div><div class="card">
-      <label class="f">Base URL</label><input type="text" id="inp-jira-url" placeholder="https://your-domain.atlassian.net">
-      <label class="f">Email</label><input type="text" id="inp-jira-email" placeholder="you@example.com">
-      <label class="f">API Token</label><input type="password" id="inp-jira-token" placeholder="Jira API token">
-      <label class="f">Project Key</label><input type="text" id="inp-jira-project" placeholder="CERT">
-      <label class="f">Xray Client ID</label><input type="text" id="inp-xray-id" placeholder="Xray Client ID (optional)">
-      <label class="f">Xray Client Secret</label><input type="password" id="inp-xray-secret" placeholder="Xray Client Secret (optional)">
-      <div style="margin-top:6px;display:flex;gap:4px"><button onclick="checkJira()" class="sm" style="flex:1">Verify Jira</button><button onclick="saveConfig()" class="sm primary" style="flex:1">&#128190; Save</button></div>
-      <div id="jira-cfg-r" style="margin-top:4px;font-size:9px;font-family:var(--font);color:var(--text-dim);display:none"></div>
-    </div></div>
+    <div class="config-section">
+      <div class="card-title">&#128203; Jira</div>
+      <div class="card-body">
+        <div class="card">
+          <label class="f">Base URL</label><input type="text" id="inp-jira-url" placeholder="https://your-domain.atlassian.net">
+          <label class="f">Email</label><input type="text" id="inp-jira-email" placeholder="you@example.com">
+          <label class="f">API Token</label><input type="password" id="inp-jira-token" placeholder="Jira API token">
+          <label class="f">Project Key</label><input type="text" id="inp-jira-project" placeholder="CERT">
+          <label class="f">Xray Client ID</label><input type="text" id="inp-xray-id" placeholder="Xray Client ID (optional)">
+          <label class="f">Xray Client Secret</label><input type="password" id="inp-xray-secret" placeholder="Xray Client Secret (optional)">
+          <div style="margin-top:6px;display:flex;gap:4px"><button onclick="checkJira()" class="sm" style="flex:1">Verify Jira</button><button onclick="saveConfig()" class="sm primary" style="flex:1">&#128190; Save</button></div>
+          <div id="jira-cfg-r" style="margin-top:4px;font-size:9px;font-family:var(--font);color:var(--text-dim);display:none"></div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- TESTS tab -->
