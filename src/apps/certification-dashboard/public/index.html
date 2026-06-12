@@ -124,6 +124,11 @@
   .config-section .card-title::after{content:'▼';font-size:8px;color:var(--text-dim);transition:transform .2s}
   .config-section:hover .card-title::after{transform:rotate(180deg)}
   main{flex:1;display:flex;flex-direction:column;overflow:hidden}
+  .live-stats{display:flex;gap:0;padding:4px 16px;background:var(--surface);border-bottom:1px solid var(--border);align-items:center;font-size:9px;font-family:var(--font)}
+  .live-stats .stat{flex:1;text-align:center;min-width:60px}
+  .live-stats .stat-label{display:block;color:var(--text-dim);text-transform:uppercase;letter-spacing:.6px;font-size:8px}
+  .live-stats .stat-val{display:block;color:var(--text-bright);font-size:14px;font-weight:700}
+  .stat.pass .stat-val{color:var(--pass)}.stat.fail .stat-val{color:var(--danger)}.stat.inconc .stat-val{color:var(--inconc)}.stat.error .stat-val{color:var(--error)}
   .banner{padding:6px 16px;font-size:11px;font-weight:600;display:none;align-items:center;gap:8px}
   .banner.active{display:flex}.banner.running{background:color-mix(in srgb,var(--accent) 12%,transparent);color:var(--accent)}.banner.done{background:color-mix(in srgb,var(--pass) 12%,transparent);color:var(--pass)}.banner.error{background:color-mix(in srgb,var(--danger) 12%,transparent);color:var(--danger)}
   /* CDS Live Charts */
@@ -334,6 +339,16 @@
       <div class="battery-cap"></div>
     </div>
     <span id="banner-msg">Idle</span>
+  </div>
+
+  <!-- Live stats bar (visible during pipeline execution) -->
+  <div class="live-stats" id="live-stats" style="display:none">
+    <div class="stat"><span class="stat-label">Progress</span><span class="stat-val" id="stat-total">0/0</span></div>
+    <div class="stat pass"><span class="stat-label">Pass</span><span class="stat-val" id="stat-pass">0</span></div>
+    <div class="stat fail"><span class="stat-label">Fail</span><span class="stat-val" id="stat-fail">0</span></div>
+    <div class="stat inconc"><span class="stat-label">Inconc</span><span class="stat-val" id="stat-inconc">0</span></div>
+    <div class="stat error"><span class="stat-label">Error</span><span class="stat-val" id="stat-error">0</span></div>
+    <div class="stat"><span class="stat-label">Elapsed</span><span class="stat-val" id="stat-elapsed">00:00</span></div>
   </div>
 
   <!-- Tab navigation -->
@@ -645,11 +660,11 @@ function connectSSE(){
   es.addEventListener('pipeline',e=>{
     const p=JSON.parse(e.data);
     updBanner(p);
+    updLiveStats(p);
     if(p.results)renderResults(p.results);
     if(p.state==='done'||p.state==='error'||p.state==='cancelled'){
       fetchResults();
       updBtns(false);
-      // Auto-show Jira upload modal 2 seconds after completion
       if(p.results&&p.results.length>0){
         setTimeout(()=>openJiraUploadModal(p.results),2000);
       }
@@ -675,12 +690,40 @@ function updSvc(key,status){
  * @param pipeline - Pipeline state object { state, message, results? }
  */
 function updBanner(pipeline){
-  const banner=$('banner'), msg=$('banner-msg'), spinner=$('spinner');
+  const banner=$('banner'), msg=$('banner-msg'), spinner=$('spinner'), stats=$('live-stats');
   banner.classList.add('active');
   banner.className='banner active '+(pipeline.state==='starting'||pipeline.state==='preparing'||pipeline.state==='testing'||pipeline.state==='cleaning'||pipeline.state==='running'?'running':pipeline.state==='done'?'done':'error');
   msg.textContent=pipeline.message||pipeline.state;
   spinner.style.display=(pipeline.state==='starting'||pipeline.state==='preparing'||pipeline.state==='testing'||pipeline.state==='running'||pipeline.state==='cleaning')?'block':'none';
-  if(pipeline.state==='done'||pipeline.state==='error')setTimeout(()=>banner.classList.remove('active'),10000);
+  if(pipeline.state==='done'||pipeline.state==='error'||pipeline.state==='cancelled'){
+    setTimeout(()=>{banner.classList.remove('active');stats.style.display='none'},10000);
+  }
+}
+
+const _pipelineStart = { ts: 0 };
+function updLiveStats(p){
+  const stats=$('live-stats');
+  const running=p.state==='starting'||p.state==='preparing'||p.state==='testing'||p.state==='running';
+  if(running){
+    if(!_pipelineStart.ts) _pipelineStart.ts=Date.now();
+    stats.style.display='flex';
+  }
+  if(p.state==='done'||p.state==='cancelled') _pipelineStart.ts=0;
+  if(!p.results) return;
+  const total=p.results.length;
+  const pass=p.results.filter(r=>r.verdict==='pass').length;
+  const fail=p.results.filter(r=>r.verdict==='fail').length;
+  const inconc=p.results.filter(r=>r.verdict==='inconc').length;
+  const err=p.results.filter(r=>r.verdict==='error').length;
+  $('stat-total').textContent=total+' tests';
+  $('stat-pass').textContent=pass;
+  $('stat-fail').textContent=fail;
+  $('stat-inconc').textContent=inconc;
+  $('stat-error').textContent=err;
+  if(running&&_pipelineStart.ts){
+    const sec=Math.floor((Date.now()-_pipelineStart.ts)/1000);
+    $('stat-elapsed').textContent=String(Math.floor(sec/60)).padStart(2,'0')+':'+String(sec%60).padStart(2,'0');
+  }
 }
 
 /**
@@ -881,8 +924,11 @@ function needsCds(testId){
  * Clears previous logs and resets the results table.
  */
 async function runPlaywright(){
-  const selected=getSelected();
-  if(selected.length===0){addLog({timestamp:new Date().toISOString(),level:'warn',message:'No tests selected!',service:'ui'});return}
+  let selected=getSelected();
+  if(selected.length===0){
+    selected=getAllTestCases();
+    addLog({timestamp:new Date().toISOString(),level:'info',message:'No tests selected — running all '+selected.length+' tests.',service:'ui'});
+  }
 
   // Determine if any selected test requires CDS
   const cdsRequired=selected.some(needsCds);
@@ -1137,7 +1183,7 @@ function renderModal(){
       const desc = tcDescriptions[tc] || '';
       const needsReset = needsCdsReset(tc);
       const resetIcon = needsReset ? '<span style="color:var(--warn);font-size:8px;margin-left:4px" title="Needs CDS reset">&#9888;</span>' : '';
-      html+=`<label class="tc-row"><input type="checkbox" class="tc-check" value="${tc}" data-needs-reset="${needsReset}" checked><span class="tc-num">${String(tcIdx).padStart(3,'0')}</span><span class="tc-name">${tc}${resetIcon}</span><span style="color:var(--text-dim);font-size:9px;margin-left:6px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${desc}</span></label>`;
+      html+=`<label class="tc-row"><input type="checkbox" class="tc-check" value="${tc}" data-needs-reset="${needsReset}"><span class="tc-num">${String(tcIdx).padStart(3,'0')}</span><span class="tc-name">${tc}${resetIcon}</span><span style="color:var(--text-dim);font-size:9px;margin-left:6px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${desc}</span></label>`;
     }
     html+=`</div></div>`;
   }
